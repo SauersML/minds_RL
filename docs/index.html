@@ -1,16 +1,21 @@
+---
+layout: null
+title: Aligned Minds | Introspective Reinforcement Learning
+---
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Aligned Minds | Introspective Reinforcement Learning</title>
+    <meta name="description" content="{{ site.description }}" />
+    <title>{{ page.title }}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="assets/style.css" />
+    <link rel="stylesheet" href="{{ "/assets/style.css" | relative_url }}" />
   </head>
   <body>
     <div class="page-shell">
@@ -21,7 +26,7 @@
       <header class="site-header">
         <div class="site-header__brand">
           <span class="brand-icon">⟢</span>
-          <span class="brand-name">Aligned Minds</span>
+          <span class="brand-name">{{ site.title }}</span>
         </div>
         <nav class="site-header__nav" aria-label="Primary">
           <a href="#vision">Vision</a>
@@ -30,7 +35,7 @@
           <a href="#evaluations">Evaluations</a>
           <a href="#roadmap">Roadmap</a>
         </nav>
-        <a class="site-header__cta" href="https://github.com/PrimeIntellect-ai/minds_RL" target="_blank" rel="noreferrer">
+        <a class="site-header__cta" href="{{ site.github.repository_url }}" target="_blank" rel="noreferrer">
           <span>View repository</span>
         </a>
       </header>

@@ -1,0 +1,58 @@
+---
+layout: null
+permalink: /404.html
+---
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Page not found | Aligned Minds</title>
+    <link rel="stylesheet" href="{{ "/assets/style.css" | relative_url }}" />
+    <style>
+      body {
+        display: grid;
+        place-items: center;
+        text-align: center;
+        padding: 40px;
+      }
+      .error-card {
+        max-width: 520px;
+        padding: 48px clamp(24px, 6vw, 60px);
+        background: rgba(13, 18, 38, 0.76);
+        border-radius: 28px;
+        border: 1px solid rgba(126, 244, 255, 0.25);
+        box-shadow: 0 24px 60px rgba(5, 6, 15, 0.65);
+      }
+      h1 {
+        margin-bottom: 16px;
+      }
+      p {
+        color: rgba(229, 234, 255, 0.72);
+        margin-bottom: 32px;
+      }
+      a.button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        background: rgba(126, 244, 255, 0.12);
+        border: 1px solid rgba(126, 244, 255, 0.35);
+        border-radius: 999px;
+        padding: 12px 28px;
+        font-weight: 600;
+        transition: background 240ms ease;
+      }
+      a.button:hover {
+        background: rgba(126, 244, 255, 0.2);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="error-card">
+      <h1>Lost in the void</h1>
+      <p>The page you’re looking for doesn’t exist. Let’s guide you back to our research overview.</p>
+      <a class="button" href="{{ "/" | relative_url }}">Return home</a>
+    </div>
+  </body>
+</html>
