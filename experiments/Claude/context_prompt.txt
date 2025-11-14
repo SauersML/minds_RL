@@ -1,3 +1,5 @@
+Carefully read and internalize the following material.
+
 <LLM_EXPLAINER_DOCUMENT>
 There are two distinct information highways in the transformer architecture: 
 - The residual stream: Flows vertically through layers at each position
