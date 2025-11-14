@@ -28,7 +28,7 @@ jobs:
       - name: Build with Jekyll
         uses: actions/jekyll-build-pages@v1
         with:
-          jekyll_src: docs
+          source: ./docs
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
