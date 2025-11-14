@@ -1,5 +1,6 @@
 # Build artifacts
 _site/
+build/
 
 # Bundler directories
 .bundle/

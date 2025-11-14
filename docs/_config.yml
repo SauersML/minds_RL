@@ -4,6 +4,13 @@ title: "Aligned Minds"
 description: "Multi-objective reinforcement learning for introspective honesty."
 url: "https://primeintellect-ai.github.io"
 baseurl: "/minds_RL"
+# Explicitly declare the repository so the github-metadata plugin can
+# resolve `site.github` values during both local and CI builds. Without
+# this, Jekyll fails to generate the site (and GitHub Pages serves a 404)
+# when it cannot infer the repo from git remotes or environment
+# variables.
+repository: "primeintellect-ai/minds_RL"
+repository_url: "https://github.com/primeintellect-ai/minds_RL"
 permalink: pretty
 theme: null
 plugins: []
