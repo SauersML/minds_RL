@@ -1,0 +1,9 @@
+# GitHub Pages configuration for the Aligned Minds project site.
+# The docs/ directory acts as the Jekyll source when building via GitHub Actions.
+title: "Aligned Minds"
+description: "Multi-objective reinforcement learning for introspective honesty."
+url: "https://primeintellect-ai.github.io"
+baseurl: "/minds_RL"
+permalink: pretty
+theme: null
+plugins: []
