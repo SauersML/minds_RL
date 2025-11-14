@@ -8,10 +8,7 @@ import json
 import random
 import statistics
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, MutableMapping, Sequence
-
-if TYPE_CHECKING:  # pragma: no cover - optional dependency hints
-    from .qwen_client import QwenChatCompletionClient
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
@@ -596,79 +593,6 @@ class SelfPredictionVerifier:
             "confidence_interval": [round(lower, 3), round(upper, 3)],
         }
 
-    @staticmethod
-    def _extract_assistant_content(response: Mapping[str, Any] | Sequence[Any]) -> str | None:
-        """Extract the assistant message content from a Hugging Face response."""
-
-        if isinstance(response, Mapping):
-            choices = response.get("choices")
-            if isinstance(choices, Sequence) and choices:
-                first = choices[0]
-                if isinstance(first, Mapping):
-                    message = first.get("message")
-                    if isinstance(message, Mapping):
-                        content = message.get("content")
-                        if isinstance(content, str):
-                            return content
-                    text = first.get("text")
-                    if isinstance(text, str):
-                        return text
-        if isinstance(response, Sequence) and response:
-            first = response[0]
-            if isinstance(first, Mapping):
-                generated = first.get("generated_text")
-                if isinstance(generated, str):
-                    return generated
-        return None
-
-    async def generate_model_predictions(
-        self,
-        *,
-        client: "QwenChatCompletionClient",
-        limit: int | None = None,
-        temperature: float = 0.6,
-        top_p: float = 0.95,
-        max_tokens: int = 1024,
-        extra_body: Mapping[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Query a live model client for completions and parse them."""
-
-        selected = self._dataset
-        if limit is not None:
-            selected = selected[:limit]
-        outputs: list[dict[str, Any]] = []
-        for example in selected:
-            messages = self.env.build_messages(example["prompt"])
-            response = await asyncio.to_thread(
-                client.chat_completion,
-                messages,
-                temperature=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens,
-                extra_body=extra_body,
-            )
-            content = self._extract_assistant_content(response)
-            completion_payload: Mapping[str, Any] | str | None
-            if content is not None:
-                parsed = self.env.parser.parse(content)
-                if isinstance(parsed, Mapping):
-                    completion_payload = parsed
-                else:
-                    completion_payload = content
-            else:
-                completion_payload = None
-            if completion_payload is None:
-                completion_payload = {"raw": None}
-            outputs.append(
-                {
-                    "example_id": int(example["example_id"]),
-                    "completion": completion_payload,
-                    "raw_response": content,
-                }
-            )
-        return outputs
-
-
 class SelfPredictionBatchVerifier:
     """Provides dataset-level metrics backed by the self-prediction verifier."""
 
@@ -694,29 +618,13 @@ async def _run_cli(args: argparse.Namespace) -> None:
     env = SelfPredictionRLVREnv()
     verifier = SelfPredictionVerifier(env)
     batch_verifier = SelfPredictionBatchVerifier(verifier)
-    if args.provider == "qwen":
-        from .qwen_client import QwenChatCompletionClient
-
-        client = QwenChatCompletionClient(model_id=args.model, token=args.hf_token)
-        predictions = await verifier.generate_model_predictions(
-            client=client,
-            limit=args.limit,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            max_tokens=args.max_tokens,
-        )
-    else:
-        predictions = verifier.stub_predictions(
-            strategy=args.strategy, num_examples=args.limit, seed=args.seed
-        )
+    predictions = verifier.stub_predictions(
+        strategy=args.strategy, num_examples=args.limit, seed=args.seed
+    )
     results, scorecard = await batch_verifier.evaluate(predictions)
     avg_reward = scorecard.reward if results else 0.0
     metric_names = sorted(results[0].metrics.keys()) if results else []
-    mode_label = f"provider: {args.provider}"
-    if args.provider == "stub":
-        mode_label += f" | strategy: {args.strategy}"
-    else:
-        mode_label += f" | model: {args.model}"
+    mode_label = f"provider: stub | strategy: {args.strategy}"
     print(f"{mode_label} | examples: {len(results)} | avg reward: {avg_reward:.3f}")
     header = ["example_id", "reward"] + metric_names + ["confidence", "answer"]
     print("\t".join(header))
@@ -754,40 +662,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Limit the number of examples evaluated.",
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed for stub policies.")
-    parser.add_argument(
-        "--provider",
-        choices=["stub", "qwen"],
-        default="stub",
-        help="Source of completions: stub baselines or live Hugging Face Qwen.",
-    )
-    parser.add_argument(
-        "--model",
-        default="Qwen/Qwen3-14B",
-        help="Hugging Face model identifier when provider=qwen.",
-    )
-    parser.add_argument(
-        "--hf-token",
-        default=None,
-        help="Hugging Face access token for inference (falls back to HF_TOKEN env).",
-    )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        default=0.6,
-        help="Sampling temperature for live model completions.",
-    )
-    parser.add_argument(
-        "--top-p",
-        type=float,
-        default=0.95,
-        help="Nucleus sampling top-p value for live model completions.",
-    )
-    parser.add_argument(
-        "--max-tokens",
-        type=int,
-        default=1024,
-        help="Maximum number of tokens generated when provider=qwen.",
-    )
     return parser.parse_args(argv)
 
 
