@@ -4,3 +4,4 @@ build/
 
 # Bundler directories
 .bundle/
+Gemfile.lock
