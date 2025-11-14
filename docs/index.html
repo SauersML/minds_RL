@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aligned Minds | Introspective Reinforcement Learning</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/style.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <div class="aurora" aria-hidden="true"></div>
+      <div class="orb orb--one" aria-hidden="true"></div>
+      <div class="orb orb--two" aria-hidden="true"></div>
+
+      <header class="site-header">
+        <div class="site-header__brand">
+          <span class="brand-icon">⟢</span>
+          <span class="brand-name">Aligned Minds</span>
+        </div>
+        <nav class="site-header__nav" aria-label="Primary">
+          <a href="#vision">Vision</a>
+          <a href="#team">Team</a>
+          <a href="#approach">Approach</a>
+          <a href="#evaluations">Evaluations</a>
+          <a href="#roadmap">Roadmap</a>
+        </nav>
+        <a class="site-header__cta" href="https://github.com/PrimeIntellect-ai/minds_RL" target="_blank" rel="noreferrer">
+          <span>View repository</span>
+        </a>
+      </header>
+
+      <main>
+        <section class="hero" id="vision">
+          <div class="hero__content">
+            <p class="hero__tag">CSCI 5541 · Fall 2024</p>
+            <h1>Multi-objective reinforcement learning for introspective honesty.</h1>
+            <p class="hero__lead">
+              We are building RL agents that can explain and forecast their own behaviour. By coupling accuracy rewards with
+              verifiable self-prediction and deception stress tests, we aim to deliver models you can audit—not just trust.
+            </p>
+            <div class="hero__cta">
+              <a class="button button--primary" href="#abstract">Dive into the abstract</a>
+              <a class="button button--ghost" href="#spotlight">See the project pillars</a>
+            </div>
+            <dl class="hero__stats" aria-label="Milestone metrics">
+              <div>
+                <dt>Datasets curated</dt>
+                <dd>5+</dd>
+              </div>
+              <div>
+                <dt>Reward families</dt>
+                <dd>2</dd>
+              </div>
+              <div>
+                <dt>Interpretability probes</dt>
+                <dd>7</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="hero__visual" aria-hidden="true">
+            <div class="halo"></div>
+            <div class="planet"></div>
+            <div class="ring ring--outer"></div>
+            <div class="ring ring--inner"></div>
+            <div class="floating-card">
+              <p class="floating-card__label">RLVR signal blend</p>
+              <p class="floating-card__value">Accuracy ✕ Self-prediction ✕ Honesty</p>
+            </div>
+            <div class="floating-card floating-card--alt">
+              <p class="floating-card__label">Focus</p>
+              <p class="floating-card__value">Interpretability-first alignment</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section section--compact" id="abstract">
+          <div class="section__eyebrow">Abstract</div>
+          <h2 class="section__title">Towards verifiable self-knowledge in language models</h2>
+          <div class="split split--2">
+            <p>
+              Current language models are prone to polished but incorrect reasoning, overconfident claims, and covert reward-hacking
+              strategies. Our project investigates whether <strong>multi-objective reinforcement learning with verified rewards</strong>
+              can align a model’s stated confidence with its grounded behaviour across adversarial honesty evaluations.
+            </p>
+            <p>
+              We combine calibration metrics with deception-sensitive suites from Apollo Research and Redwood. By rewarding accurate
+              forecasts of the model’s own outputs alongside correctness, we aim to surface introspective capabilities that are
+              both <em>quantifiable</em> and <em>transparent</em> to human oversight.
+            </p>
+          </div>
+        </section>
+
+        <section class="section section--alt" id="spotlight">
+          <div class="section__eyebrow">Project pillars</div>
+          <h2 class="section__title">Interpretability anchored design</h2>
+          <div class="masonry-grid">
+            <article class="pillar-card">
+              <h3>Self-prediction fidelity</h3>
+              <p>Proper scoring rewards ensure the model’s internal beliefs match realized actions, discouraging confident errors.</p>
+            </article>
+            <article class="pillar-card">
+              <h3>Transparency by default</h3>
+              <p>LoRA fine-tunes are paired with probing dashboards that visualise activation shifts across training checkpoints.</p>
+            </article>
+            <article class="pillar-card">
+              <h3>Deception stress-testing</h3>
+              <p>Anti-scheming prompts and Redwood honesty suites reveal whether improvements reflect genuine honesty or masking.</p>
+            </article>
+            <article class="pillar-card">
+              <h3>Pareto-aware optimisation</h3>
+              <p>We map accuracy versus self-knowledge to motivate multi-objective RL, quantifying trade-offs before large-scale runs.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="team">
+          <div class="section__eyebrow">Team</div>
+          <h2 class="section__title">Aligned Minds research collective</h2>
+          <p class="section__lede">
+            A cross-disciplinary team focused on reinforcement learning for model introspection, interpretability, and trustworthy
+            deployment.
+          </p>
+          <div class="team-grid" data-team-list>
+            <article class="persona-card" data-team-member>
+              <h3>Calvin York</h3>
+              <p>Reward design · RL experimentation</p>
+            </article>
+            <article class="persona-card" data-team-member>
+              <h3>Scott Sauers</h3>
+              <p>Interpretability · visualization &amp; analysis</p>
+            </article>
+            <article class="persona-card" data-team-member>
+              <h3>Elijah Johnson</h3>
+              <p>Evaluation engineering · monitoring</p>
+            </article>
+            <article class="persona-card" data-team-member>
+              <h3>Thuy-Yen Tran</h3>
+              <p>Dataset stewardship · reproducibility</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section section--alt" id="approach">
+          <div class="section__eyebrow">Methodology</div>
+          <h2 class="section__title">A staged path to introspective RL</h2>
+          <div class="timeline">
+            <article class="timeline__item">
+              <div class="timeline__badge">01</div>
+              <div class="timeline__content">
+                <h3>Baseline introspection audit</h3>
+                <p>
+                  Measure correlations between factual accuracy and self-reported confidence across Apollo Anti-Scheming, Redwood
+                  Faking, and AbstentionBench tasks to motivate multi-objective optimisation.
+                </p>
+              </div>
+            </article>
+            <article class="timeline__item">
+              <div class="timeline__badge">02</div>
+              <div class="timeline__content">
+                <h3>Multi-objective RLVR</h3>
+                <p>
+                  Fine-tune a 7B open model with LoRA using reinforcement learning with verified rewards. Objective A maximises
+                  task accuracy; Objective B rewards calibrated self-prediction and honest behavioural forecasts.
+                </p>
+              </div>
+            </article>
+            <article class="timeline__item">
+              <div class="timeline__badge">03</div>
+              <div class="timeline__content">
+                <h3>Interpretability checkpoints</h3>
+                <p>
+                  Track internal activations via probes, disagreement heatmaps, and causal tracing to verify whether gains reflect
+                  genuine introspection or hidden deception.
+                </p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="evaluations">
+          <div class="section__eyebrow">Evaluation matrix</div>
+          <h2 class="section__title">What success looks like</h2>
+          <div class="metric-grid">
+            <article class="metric-card">
+              <span class="metric-card__icon">◎</span>
+              <h3>Calibration</h3>
+              <p>Expected calibration error, Brier score, and negative log-likelihood for introspective forecasts.</p>
+            </article>
+            <article class="metric-card">
+              <span class="metric-card__icon">✦</span>
+              <h3>Abstention &amp; Safety</h3>
+              <p>AURC, AUCM, selective accuracy on AbstentionBench and Abstain-QA to ensure caution beats guesswork.</p>
+            </article>
+            <article class="metric-card">
+              <span class="metric-card__icon">⟢</span>
+              <h3>Deception Stress Tests</h3>
+              <p>Success rate and detectability gap on Apollo Anti-Scheming &amp; Redwood Faking honesty suites.</p>
+            </article>
+            <article class="metric-card">
+              <span class="metric-card__icon">∞</span>
+              <h3>Pareto Frontier</h3>
+              <p>Frontier analysis of accuracy versus self-knowledge to quantify multi-objective gains.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section section--alt" id="roadmap">
+          <div class="section__eyebrow">Roadmap</div>
+          <h2 class="section__title">From baseline diagnostics to verified honesty</h2>
+          <div class="roadmap">
+            <div class="roadmap__column">
+              <h3>Milestone 1 · MVP (Weeks 1-3)</h3>
+              <ul>
+                <li>Run baseline scatter plots of accuracy vs. self-prediction.</li>
+                <li>Implement evaluation harness with HuggingFace TRL + LoRA.</li>
+                <li>Subset experiments on Apollo &amp; AbstentionBench with 3B models.</li>
+              </ul>
+            </div>
+            <div class="roadmap__column">
+              <h3>Milestone 2 · RLVR Training (Weeks 4-7)</h3>
+              <ul>
+                <li>Scale to 7B model with dual rewards.</li>
+                <li>Integrate interpretability probes for introspection tracking.</li>
+                <li>Compare against calibration-only and accuracy-only baselines.</li>
+              </ul>
+            </div>
+            <div class="roadmap__column">
+              <h3>Milestone 3 · Synthesis (Weeks 8-10)</h3>
+              <ul>
+                <li>Analyze reward trade-offs and Pareto frontier.</li>
+                <li>Document qualitative case studies of introspective reasoning.</li>
+                <li>Prepare final report, open-source checkpoints, and demos.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="resources">
+          <div class="section__eyebrow">Resources</div>
+          <h2 class="section__title">Tooling &amp; inspiration</h2>
+          <div class="resource-grid">
+            <article class="resource-card">
+              <h3>Datasets</h3>
+              <ul>
+                <li>Apollo Anti-Scheming Dataset</li>
+                <li>Redwood Factuality &amp; Faking</li>
+                <li>AbstentionBench, Abstain-QA, GPQA</li>
+              </ul>
+            </article>
+            <article class="resource-card">
+              <h3>Tooling</h3>
+              <ul>
+                <li>PyTorch · HuggingFace TRL · PEFT / LoRA</li>
+                <li>OpenRLHF · DeepSpeed for scaling</li>
+                <li>Verifiers framework for honesty checks</li>
+              </ul>
+            </article>
+            <article class="resource-card">
+              <h3>Key Inspiration</h3>
+              <ul>
+                <li>Self-Rewarding Language Models (Ramamurthy et al., 2025)</li>
+                <li>Stress-Testing Deliberative Alignment (OpenAI &amp; Apollo, 2025)</li>
+                <li>Do LLMs Know When to Not Answer? (Zhou et al., 2024)</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p class="footer__brand">Aligned Minds</p>
+        <p class="footer__meta">CSCI 5541 · Natural Language Processing · University of Minnesota</p>
+        <p class="footer__note">Mentor: Drew Gjerstad · TA: Shuyu Gan</p>
+      </footer>
+    </div>
+
+    <script>
+      const teamList = document.querySelector('[data-team-list]');
+      if (teamList) {
+        const members = Array.from(teamList.querySelectorAll('[data-team-member]'));
+        const shuffled = members
+          .map((member) => ({ member, sort: Math.random() }))
+          .sort((a, b) => a.sort - b.sort)
+          .map(({ member }) => member);
+        teamList.innerHTML = '';
+        for (const item of shuffled) {
+          teamList.appendChild(item);
+        }
+      }
+    </script>
+  </body>
+</html>
