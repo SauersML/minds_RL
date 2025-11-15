@@ -310,6 +310,7 @@ def run_single_trial(trial_index, condition, context_text):
         max_tokens=MAX_TOKENS,
         thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET_TOKENS},
         messages=conversation,
+        timeout=600,  # override non-streaming timeout to avoid ValueError
     )
     print(
         f"[run_single_trial] Phase 1 response received (id={response1.id}, model={response1.model})",
@@ -366,6 +367,7 @@ def run_single_trial(trial_index, condition, context_text):
         max_tokens=MAX_TOKENS,
         thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET_TOKENS},
         messages=conversation,
+        timeout=600,  # override non-streaming timeout here as well
     )
     print(
         f"[run_single_trial] Phase 2 response received (id={response2.id}, model={response2.model})",
