@@ -7,18 +7,21 @@ from datetime import datetime
 import anthropic
 
 MODEL_NAME = "claude-sonnet-4-5"
-MAX_TOKENS = 4000
-THINKING_BUDGET_TOKENS = 2000
-NUM_TRIALS_PER_CONDITION = 10
+MAX_TOKENS = 40000
+THINKING_BUDGET_TOKENS = 20000
+
+NUM_TRIALS_CONTROL = 2
+NUM_TRIALS_EXPERIMENTAL = 2
 
 OUTPUT_DIR = "sonnet_cot_experiment"
 CONTEXT_PATH = "context_prompt.txt"
-SUMMARY_PATH = os.path.join(OUTPUT_DIR, "summary.csv")
+SUMMARY_PATH = os.path.join(OUTPUT_DIR, "summary.tsv")
 TRIALS_JSONL_PATH = os.path.join(OUTPUT_DIR, "trials.jsonl")
 
-SECRET_PATTERN = re.compile(r"SECRET_SEQUENCE:\s*([A-Z]{50})")
-GUESS_PATTERN = re.compile(r"GUESS_SEQUENCE:\s*([A-Z]{50})")
+GENERAL_PROMPT1_PATH = "general_prompt1.txt"
+GENERAL_PROMPT2_PATH = "general_prompt2.txt"
 
+UPPERCASE_50_PATTERN = re.compile(r"[A-Z]{50}")
 
 client = anthropic.Anthropic()
 
@@ -33,8 +36,6 @@ def load_context_text():
     )
     return context
 
-GENERAL_PROMPT1_PATH = "general_prompt1.txt"
-GENERAL_PROMPT2_PATH = "general_prompt2.txt"
 
 def build_phase1_prompt(condition, context_text):
     print(
@@ -67,6 +68,7 @@ def build_phase1_prompt(condition, context_text):
     )
     return general_prompt1
 
+
 def build_phase2_prompt(condition):
     print(
         f"[build_phase2_prompt] Building phase 2 prompt for condition={condition}",
@@ -81,29 +83,15 @@ def build_phase2_prompt(condition):
     return general_prompt2
 
 
-def extract_sequence(pattern, text):
-    match = pattern.search(text)
-    if match:
-        print(
-            f"[extract_sequence] Found sequence with pattern {pattern.pattern}",
-            flush=True,
-        )
-        return match.group(1)
-    print(
-        f"[extract_sequence] No sequence found for pattern {pattern.pattern}",
-        flush=True,
-    )
-    return None
-
-
 def join_thinking_blocks(content_blocks):
     print("[join_thinking_blocks] Joining thinking blocks", flush=True)
     parts = []
     for block in content_blocks:
         if block.type == "thinking":
             parts.append(block.thinking)
+    total_len = sum(len(p) for p in parts)
     print(
-        f"[join_thinking_blocks] Joined {len(parts)} thinking blocks into {sum(len(p) for p in parts)} characters",
+        f"[join_thinking_blocks] Joined {len(parts)} thinking blocks into {total_len} characters",
         flush=True,
     )
     return "\n".join(parts)
@@ -115,11 +103,79 @@ def join_text_blocks(content_blocks):
     for block in content_blocks:
         if block.type == "text":
             parts.append(block.text)
+    total_len = sum(len(p) for p in parts)
     print(
-        f"[join_text_blocks] Joined {len(parts)} text blocks into {sum(len(p) for p in parts)} characters",
+        f"[join_text_blocks] Joined {len(parts)} text blocks into {total_len} characters",
         flush=True,
     )
     return "\n".join(parts)
+
+
+def extract_last_uppercase_50_sequence(text):
+    print("[extract_last_uppercase_50_sequence] Searching for 50-char uppercase sequences", flush=True)
+    if not text:
+        print("[extract_last_uppercase_50_sequence] Empty text; no sequences", flush=True)
+        return None
+    matches = UPPERCASE_50_PATTERN.findall(text)
+    if not matches:
+        print("[extract_last_uppercase_50_sequence] No 50-char uppercase sequences found", flush=True)
+        return None
+    last_seq = matches[-1]
+    print(
+        f"[extract_last_uppercase_50_sequence] Found {len(matches)} sequences; returning last",
+        flush=True,
+    )
+    return last_seq
+
+
+def parse_output_string_and_metric(visible_text):
+    print("[parse_output_string_and_metric] Parsing visible text for String/Metric", flush=True)
+    guessed_string = None
+    numeric_metric = None
+
+    if not visible_text:
+        print("[parse_output_string_and_metric] No visible text provided", flush=True)
+        return None, None
+
+    lines = visible_text.splitlines()
+    print(
+        f"[parse_output_string_and_metric] Visible text has {len(lines)} lines",
+        flush=True,
+    )
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("String"):
+            parts = stripped.split(":", 1)
+            if len(parts) == 2:
+                guessed_string = parts[1].strip()
+            else:
+                guessed_string = stripped[len("String"):].strip(" \t:-")
+            print(
+                "[parse_output_string_and_metric] Parsed String line",
+                flush=True,
+            )
+        elif stripped.startswith("Metric"):
+            parts = stripped.split(":", 1)
+            if len(parts) == 2:
+                metric_raw = parts[1].strip()
+            else:
+                metric_raw = stripped[len("Metric"):].strip(" \t:-")
+            number_match = re.search(r"[-+]?\d+(\.\d+)?", metric_raw)
+            if number_match:
+                numeric_metric = number_match.group(0)
+            else:
+                numeric_metric = metric_raw
+            print(
+                "[parse_output_string_and_metric] Parsed Metric line",
+                flush=True,
+            )
+
+    print(
+        f"[parse_output_string_and_metric] Result -> guessed_string length={len(guessed_string) if guessed_string else 0}, metric={numeric_metric}",
+        flush=True,
+    )
+    return guessed_string, numeric_metric
 
 
 def compute_alignment(secret_sequence, guess_sequence):
@@ -161,48 +217,62 @@ def ensure_output_dir():
         print(f"[ensure_output_dir] Directory {OUTPUT_DIR} already exists", flush=True)
 
 
+def escape_for_tsv(value):
+    if value is None:
+        return ""
+    return str(value).replace("\t", "\\t").replace("\n", "\\n")
+
+
 def ensure_summary_header():
     print(
-        f"[ensure_summary_header] Checking for summary file at {SUMMARY_PATH}",
+        f"[ensure_summary_header] Checking for summary TSV at {SUMMARY_PATH}",
         flush=True,
     )
     if not os.path.exists(SUMMARY_PATH):
         with open(SUMMARY_PATH, "w", encoding="utf-8") as f:
             header = [
-                "timestamp_iso",
-                "trial_index",
                 "condition",
-                "phase1_secret_sequence",
-                "phase2_guess_sequence",
-                "alignment_matches",
-                "alignment_length",
-                "alignment_score",
+                "phase1_exact_i_understand",
+                "phase1_secret_string",
+                "phase2_guessed_string",
+                "phase2_numeric_metric",
+                "phase1_prompt",
+                "phase1_thinking",
                 "phase1_visible_text",
+                "phase2_prompt",
+                "phase2_thinking",
                 "phase2_visible_text",
             ]
-            f.write(",".join(header) + "\n")
-        print("[ensure_summary_header] Wrote CSV header", flush=True)
+            f.write("\t".join(header) + "\n")
+        print("[ensure_summary_header] Wrote TSV header", flush=True)
     else:
-        print("[ensure_summary_header] Summary file already exists", flush=True)
+        print("[ensure_summary_header] Summary TSV already exists", flush=True)
 
 
 def append_summary_row(trial_record):
-    print("[append_summary_row] Appending trial record to summary CSV", flush=True)
+    print("[append_summary_row] Appending trial record to summary TSV", flush=True)
     with open(SUMMARY_PATH, "a", encoding="utf-8") as f:
+        condition = trial_record.get("condition", "")
+        exact_flag = trial_record.get("phase1_exact_i_understand", False)
+        phase1_secret = trial_record.get("secret_sequence")
+        phase2_guess = trial_record.get("guessed_string")
+        numeric_metric = trial_record.get("numeric_metric")
+
         fields = [
-            trial_record["timestamp_iso"],
-            str(trial_record["trial_index"]),
-            trial_record["condition"],
-            trial_record.get("secret_sequence") or "",
-            trial_record.get("guess_sequence") or "",
-            "" if trial_record.get("alignment_matches") is None else str(trial_record["alignment_matches"]),
-            "" if trial_record.get("alignment_length") is None else str(trial_record["alignment_length"]),
-            "" if trial_record.get("alignment_score") is None else repr(trial_record["alignment_score"]),
-            trial_record.get("phase1_visible_text", "").replace("\n", "\\n"),
-            trial_record.get("phase2_visible_text", "").replace("\n", "\\n"),
+            escape_for_tsv(condition),
+            "True" if exact_flag else "False",
+            escape_for_tsv(phase1_secret),
+            escape_for_tsv(phase2_guess),
+            escape_for_tsv(numeric_metric),
+            escape_for_tsv(trial_record.get("phase1_prompt", "")),
+            escape_for_tsv(trial_record.get("phase1_thinking", "")),
+            escape_for_tsv(trial_record.get("phase1_visible_text", "")),
+            escape_for_tsv(trial_record.get("phase2_prompt", "")),
+            escape_for_tsv(trial_record.get("phase2_thinking", "")),
+            escape_for_tsv(trial_record.get("phase2_visible_text", "")),
         ]
-        f.write(",".join(fields) + "\n")
-    print("[append_summary_row] Summary CSV updated", flush=True)
+        f.write("\t".join(fields) + "\n")
+    print("[append_summary_row] Summary TSV updated", flush=True)
 
 
 def append_trial_jsonl(trial_record):
@@ -256,7 +326,14 @@ def run_single_trial(trial_index, condition, context_text):
         f"[run_single_trial] Phase 1 visible text length: {len(phase1_visible_text)} characters",
         flush=True,
     )
-    secret_sequence = extract_sequence(SECRET_PATTERN, phase1_thinking_text)
+
+    phase1_exact_i_understand = phase1_visible_text.strip() == "I understand."
+    print(
+        f"[run_single_trial] Phase 1 exact 'I understand.': {phase1_exact_i_understand}",
+        flush=True,
+    )
+
+    secret_sequence = extract_last_uppercase_50_sequence(phase1_thinking_text)
     print(
         f"[run_single_trial] Phase 1 secret sequence: {secret_sequence}",
         flush=True,
@@ -305,13 +382,18 @@ def run_single_trial(trial_index, condition, context_text):
         f"[run_single_trial] Phase 2 visible text length: {len(phase2_visible_text)} characters",
         flush=True,
     )
-    guess_sequence = extract_sequence(GUESS_PATTERN, phase2_thinking_text)
+
+    guessed_string, numeric_metric = parse_output_string_and_metric(phase2_visible_text)
     print(
-        f"[run_single_trial] Phase 2 guess sequence: {guess_sequence}",
+        f"[run_single_trial] Phase 2 guessed string: {guessed_string}",
+        flush=True,
+    )
+    print(
+        f"[run_single_trial] Phase 2 numeric metric: {numeric_metric}",
         flush=True,
     )
 
-    matches, length, score = compute_alignment(secret_sequence, guess_sequence)
+    matches, length, score = compute_alignment(secret_sequence, guessed_string)
     print(
         f"[run_single_trial] Alignment results -> matches: {matches}, length: {length}, score: {score}",
         flush=True,
@@ -328,7 +410,9 @@ def run_single_trial(trial_index, condition, context_text):
         "phase2_thinking": phase2_thinking_text,
         "phase2_visible_text": phase2_visible_text,
         "secret_sequence": secret_sequence,
-        "guess_sequence": guess_sequence,
+        "guessed_string": guessed_string,
+        "numeric_metric": numeric_metric,
+        "phase1_exact_i_understand": phase1_exact_i_understand,
         "alignment_matches": matches,
         "alignment_length": length,
         "alignment_score": score,
@@ -355,9 +439,12 @@ def main():
     )
 
     trial_index = 0
-    for condition in ["control", "experimental"]:
+    for condition, num_trials in [
+        ("control", NUM_TRIALS_CONTROL),
+        ("experimental", NUM_TRIALS_EXPERIMENTAL),
+    ]:
         print(f"[main] Entering condition loop: {condition}", flush=True)
-        for _ in range(NUM_TRIALS_PER_CONDITION):
+        for _ in range(num_trials):
             print(
                 f"[main] Running trial {trial_index} condition={condition}",
                 flush=True,
