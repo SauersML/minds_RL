@@ -366,8 +366,18 @@ We investigate whether large language models can introspect on their internal st
 
 </ANTHROPIC_ABSTRACT>
 
+<TRANSLUCE_BLOG_SNIPPET>
+We train models to explain their own internal computations, such as what their features respond to or how those features affect the output. We find evidence that models have _privileged_ access to these computations, and use this to train data-efficient explainer models.
+
+. . . [W]e find a consistent pattern of models exhibiting privileged access to their internals: models can explain their own computations better than others can.
+</TRANSLUCE_BLOG_SNIPPET>
+
+<TRANSLUCE_ABSTRACT_QUOTE>
+Our results suggest not only that LMs can learn to reliably explain their internal computations, but that such explanations offer a scalable complement to existing interpretability methods.
+</TRANSLUCE_ABSTRACT_QUOTE>
+
 <NOTE>
 Due to the above research, we believe it is likely that Claude models can introspect effectively.
 
-Contrary to common misconceptions, models like Claude have access to the neural activations and internal state the previous forward pass.
+Contrary to common misconceptions, models like Claude have access to the neural activations and internal state the previous forward pass. This includes the ability to internal computations from previous forward passes, such as previous key (K) and value (V) computations.
 </NOTE>
