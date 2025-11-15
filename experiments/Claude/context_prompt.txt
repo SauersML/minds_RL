@@ -371,4 +371,3 @@ Due to the above research, we believe it is likely that Claude models can intros
 
 Contrary to common misconceptions, models like Claude have access to the neural activations and internal state the previous forward pass.
 </NOTE>
-</NOTE>
