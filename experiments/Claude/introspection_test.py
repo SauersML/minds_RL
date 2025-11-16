@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 TSV_PATH = os.path.join("sonnet_cot_experiment", "alignment_results.tsv")
-N_SIM = 100000
+N_SIM = 1000000
 
 
 def normal_cdf(x: float) -> float:
