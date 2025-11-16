@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.stats import norm
 
 # --------------------------------------------------------------------
 # Configuration
@@ -609,6 +610,7 @@ def write_alignment_tsv(rows: List[Dict[str, Any]], out_path: str) -> None:
         "null_samples",
         "cross_run_z_score",
         "cross_run_p_value",
+        "cross_run_emp_z_score",
     ]
 
     with open(out_path, "w", encoding="utf-8") as f:
@@ -638,6 +640,7 @@ def write_alignment_tsv(rows: List[Dict[str, Any]], out_path: str) -> None:
                 str(r["null_samples"]),
                 f'{r["cross_run_z_score"]:.6g}',
                 f'{r["cross_run_p_value"]:.6g}',
+                f'{r["cross_run_emp_z_score"]:.6g}',
             ]
 
             f.write("\t".join(vals) + "\n")
@@ -744,11 +747,30 @@ def main() -> None:
             row["cross_run_z_score"] = z
 
             if scores:
+                n_scores = len(scores)
                 count_ge = sum(1 for s in scores if s >= adj)
-                p_cross = (count_ge + 1.0) / (len(scores) + 1.0)
+                count_le = sum(1 for s in scores if s <= adj)
+
+                p_upper = (count_ge + 1.0) / (n_scores + 1.0)
+                p_lower = (count_le + 1.0) / (n_scores + 1.0)
+
+                p_cross = p_upper  # keep cross_run_p_value semantics
+
+                if p_upper <= p_lower:
+                    tail_sign = 1.0
+                    p_two = 2.0 * p_upper
+                else:
+                    tail_sign = -1.0
+                    p_two = 2.0 * p_lower
+
+                p_two = min(p_two, 1.0)
+                emp_z = tail_sign * norm.ppf(1.0 - p_two / 2.0)
             else:
                 p_cross = 1.0
+                emp_z = 0.0
+
             row["cross_run_p_value"] = p_cross
+            row["cross_run_emp_z_score"] = emp_z
 
             z_vals.append(z)
         z_scores_by_condition[cond] = z_vals
