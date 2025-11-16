@@ -90,7 +90,7 @@ def test_positive_asymmetry(z_vals: np.ndarray) -> None:
     skew_obs = float(np.mean(x**3))
 
     abs_z = np.abs(z)
-    B = 20000
+    B = 2000000
     rng = np.random.default_rng(123)
 
     def skewness(arr: np.ndarray) -> float:
