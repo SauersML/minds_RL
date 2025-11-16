@@ -607,7 +607,10 @@ def write_alignment_tsv(rows: List[Dict[str, Any]], out_path: str) -> None:
         "identity",
         "alphabet_size",
         "null_samples",
+        "cross_run_z_score",
+        "cross_run_p_value",
     ]
+
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\t".join(header) + "\n")
         for r in rows:
@@ -633,7 +636,10 @@ def write_alignment_tsv(rows: List[Dict[str, Any]], out_path: str) -> None:
                 f'{r["identity"]:.6g}',
                 str(r["alphabet_size"]),
                 str(r["null_samples"]),
+                f'{r["cross_run_z_score"]:.6g}',
+                f'{r["cross_run_p_value"]:.6g}',
             ]
+
             f.write("\t".join(vals) + "\n")
 
 
@@ -727,12 +733,23 @@ def main() -> None:
         cross_null_mean[cond] = mu
         cross_null_std[cond] = sigma
 
+        cond_results = within_results_by_condition.get(cond, [])
         z_vals: List[float] = []
-        for adj in alt_adjusted_scores_by_condition.get(cond, []):
+        for row in cond_results:
+            adj = float(row["adjusted_score"])
             if sigma > 0.0:
                 z = (adj - mu) / sigma
             else:
                 z = 0.0
+            row["cross_run_z_score"] = z
+
+            if scores:
+                count_ge = sum(1 for s in scores if s >= adj)
+                p_cross = (count_ge + 1.0) / (len(scores) + 1.0)
+            else:
+                p_cross = 1.0
+            row["cross_run_p_value"] = p_cross
+
             z_vals.append(z)
         z_scores_by_condition[cond] = z_vals
 
