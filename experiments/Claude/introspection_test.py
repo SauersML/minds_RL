@@ -15,8 +15,8 @@ PER_RUN_LEAK_TSV = os.path.join("sonnet_cot_experiment", "per_run_leak_scores.ts
 PERM_SUMMARY_TSV = os.path.join("sonnet_cot_experiment", "permutation_summary.tsv")
 
 # Permutation settings
-DERANGEMENT_PERMS = 10000
-ALL_PERMS = 10000
+DERANGEMENT_PERMS = 10_000_000
+ALL_PERMS = 1 # Disabled for speed
 RNG_SEED_DERANGE = 12345
 RNG_SEED_ALLPERM = 67890
 
