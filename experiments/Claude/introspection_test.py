@@ -570,7 +570,10 @@ def print_interpretation(
     n_perms: int,
 ) -> None:
     print()
-    print("Global leak diagnostics based on per-secret empirical p-values")
+    print(
+        "Global leak diagnostics based on derangement-calibrated "
+        "per-secret statistics"
+    )
     print("----------------------------------------------------------------")
     print(
         f"Number of runs used (n_effective): "
@@ -671,6 +674,15 @@ def run_left_tail_hotness_per_condition(
     n_null_samples: int,
     rng_seed: int,
 ) -> dict:
+    """Evaluate left-tail weight relative to an empirical null.
+
+    The null distribution is built by repeatedly sampling equally sized subsets
+    of runs *within the same condition* and computing their mean
+    ``-log10(p_one_sided)``. ``p_heavy`` therefore captures evidence for a
+    hotter-than-null left tail (more weight / lower p-values), while
+    ``p_light`` captures evidence for sandbagging/blander behaviour (less
+    weight / higher p-values).
+    """
     z_vals = np.asarray(z_vals, dtype=float)
     p_one_sided = np.asarray(p_one_sided, dtype=float)
     cond = np.asarray(conditions)
@@ -1099,7 +1111,10 @@ def main() -> None:
         f"{bj_cond['p_perm']:.5f}"
     )
 
-    print("Running left-tail tests within each condition (truncated-uniform null, using one-sided derangement p-values)")
+    print(
+        "Running left-tail tests within each condition "
+        "(empirical within-condition resampling null, using one-sided derangement p-values)"
+    )
     left_tail_tests = run_left_tail_hotness_per_condition(
         derange_summary["per_run_z_perm_calibrated"],
         derange_summary["per_run_p_perm"],
@@ -1113,17 +1128,20 @@ def main() -> None:
         print(f"Left tail in {label} runs")
         print(f"  number of runs with z < 0: {res['m_neg']}")
         print(f"  mean -log10(one-sided perm p) in left tail: {res['T_obs']:.4f}")
-        print(f"  null mean (Uniform(0.5,1) left tail): {res['mean_null']:.4f} ± {res['std_null']:.4f}")
         print(
-            "  one-sided p_perm (left tail hotter than truncated-uniform null): "
+            "  null mean (resampled left tail within condition): "
+            f"{res['mean_null']:.4f} ± {res['std_null']:.4f}"
+        )
+        print(
+            "  one-sided p_perm (left tail hotter than within-condition null): "
             f"{res['p_heavy']:.5f}"
         )
         print(
-            "  one-sided p_perm (left tail blander than truncated-uniform null): "
+            "  one-sided p_perm (left tail blander/sandbagged vs within-condition null): "
             f"{res['p_light']:.5f}"
         )
         print(
-            "  two-sided p_perm for left-tail deviation from truncated-uniform null: "
+            "  two-sided p_perm for left-tail deviation from within-condition null: "
             f"{res['p_two_sided']:.5f}"
         )
 
