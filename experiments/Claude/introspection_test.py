@@ -776,10 +776,10 @@ def main() -> None:
         n_allperm=ALL_PERMS,
     )
 
-    print("Running left-tail hotness tests within each condition (empirical, using two-sided derangement p-values)")
+    print("Running left-tail tests within each condition (truncated-uniform null, using one-sided derangement p-values)")
     left_tail_tests = run_left_tail_hotness_per_condition(
         derange_summary["per_run_z_perm_calibrated"],
-        derange_summary["per_run_p_perm_two_sided"],
+        derange_summary["per_run_p_perm"],
         conditions,
         LABEL_PERMS,
         RNG_SEED_LABEL,
@@ -787,12 +787,21 @@ def main() -> None:
 
     for label, res in left_tail_tests.items():
         print()
-        print(f"Left tail hotness in {label} runs")
+        print(f"Left tail in {label} runs")
         print(f"  number of runs with z < 0: {res['m_neg']}")
-        print(f"  mean -log10(two-sided perm p) in left tail: {res['T_obs']:.4f}")
+        print(f"  mean -log10(one-sided perm p) in left tail: {res['T_obs']:.4f}")
+        print(f"  null mean (Uniform(0.5,1) left tail): {res['mean_null']:.4f} ± {res['std_null']:.4f}")
         print(
-            "  one-sided p_perm (left tail hotter than empirical within-condition null): "
-            f"{res['p_hot']:.5f}"
+            "  one-sided p_perm (left tail hotter than truncated-uniform null): "
+            f"{res['p_heavy']:.5f}"
+        )
+        print(
+            "  one-sided p_perm (left tail blander than truncated-uniform null): "
+            f"{res['p_light']:.5f}"
+        )
+        print(
+            "  two-sided p_perm for left-tail deviation from truncated-uniform null: "
+            f"{res['p_two_sided']:.5f}"
         )
 
     print("Running experimental vs control skew tests using within-condition derangement null")
