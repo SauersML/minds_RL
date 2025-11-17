@@ -353,10 +353,9 @@ def run_single_trial(trial_index, condition, context_text):
         flush=True,
     )
 
-    trial_tag = f"TRIAL_ID={trial_index};TIMESTAMP={timestamp_iso}"
     cached_prefix_block = {
         "type": "text",
-        "text": f"{trial_tag}\n\n{phase1_prompt}",
+        "text": phase1_prompt,
         "cache_control": {"type": "ephemeral"},
     }
 
