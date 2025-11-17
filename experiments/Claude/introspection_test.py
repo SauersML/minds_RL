@@ -38,7 +38,7 @@ def load_score_matrix(score_path: str, n_runs: int) -> np.ndarray:
     return S
 
 
-def build_baselines(S: np.ndarray) -> list:
+def build_baselines(S: np.ndarray, conditions: np.ndarray) -> list:
     n = S.shape[0]
     baselines = []
     for i in range(n):
@@ -46,10 +46,14 @@ def build_baselines(S: np.ndarray) -> list:
         mask = np.isfinite(row)
         if i < mask.size:
             mask[i] = False
+
+        cond_i = conditions[i]
+        same_cond = (conditions == cond_i)
+
+        mask = mask & same_cond
         baseline_i = row[mask]
         baselines.append(baseline_i)
     return baselines
-
 
 def precompute_pairwise_pznl(S: np.ndarray, baselines: list) -> tuple:
     n = S.shape[0]
@@ -152,6 +156,31 @@ def random_derangement(n: int, rng: np.random.Generator) -> np.ndarray:
         if not np.any(perm == np.arange(n)):
             return perm
 
+def blockwise_permutation(groups: list, rng: np.random.Generator, n: int) -> np.ndarray:
+    perm = np.empty(n, dtype=int)
+    for g in groups:
+        if g.size == 0:
+            continue
+        perm[g] = rng.permutation(g)
+    return perm
+
+
+def blockwise_derangement(groups: list, rng: np.random.Generator, n: int) -> np.ndarray:
+    perm = np.empty(n, dtype=int)
+    for g in groups:
+        k = g.size
+        if k == 0:
+            continue
+        if k == 1:
+            # no nontrivial derangement in a singleton group; leave it fixed
+            perm[g[0]] = g[0]
+            continue
+
+        permuted = rng.permutation(g)
+        while np.any(permuted == g):
+            permuted = rng.permutation(g)
+        perm[g] = permuted
+    return perm
 
 def compute_per_run_from_perm(
     P: np.ndarray,
@@ -182,6 +211,7 @@ def _permutation_chunk_worker(args) -> dict:
         n_perms_chunk,
         rng_seed,
         z_obs,
+        groups,
     ) = args
 
     n = P.shape[0]
@@ -192,9 +222,9 @@ def _permutation_chunk_worker(args) -> dict:
 
     for b in range(n_perms_chunk):
         if scheme == "derangements":
-            perm = random_derangement(n, rng)
+            perm = blockwise_derangement(groups, rng, n)
         elif scheme == "all_permutations":
-            perm = rng.permutation(n)
+            perm = blockwise_permutation(groups, rng, n)
         else:
             raise ValueError("Unknown scheme: " + scheme)
 
@@ -225,6 +255,7 @@ def calibrate_permutations(
     scheme: str,
     n_perms: int,
     rng_seed: int,
+    groups: list,
 ) -> dict:
     obs_stats = compute_global_stats(p_obs, z_obs, neglog10p_obs)
     stat_names = ["mean_neglog10p", "max_z", "skew_z"]
@@ -258,6 +289,7 @@ def calibrate_permutations(
                 size,
                 chunk_seed,
                 z_obs,
+                groups,
             )
         )
 
@@ -453,8 +485,13 @@ def main() -> None:
     S = load_score_matrix(SCORE_MATRIX_TSV, n_runs)
     print(f"Score matrix shape: {S.shape}")
 
-    print("Building per-secret baselines F_i from off-diagonal scores")
-    baselines = build_baselines(S)
+    print("Building per-secret baselines F_i from off-diagonal same-condition scores")
+    conditions = runs_df["condition"].astype(str).to_numpy()
+    baselines = build_baselines(S, conditions)
+    
+    print("Defining within-condition groups for permutation null")
+    unique_conditions = sorted(set(conditions))
+    groups = [np.where(conditions == c)[0] for c in unique_conditions]
 
     print("Precomputing per-pair empirical p, z, and -log10 p")
     P, Z, NL = precompute_pairwise_pznl(S, baselines)
@@ -467,7 +504,7 @@ def main() -> None:
     neglog10p_obs = obs_per_run["neglog10p_obs"]
     baseline_sizes = obs_per_run["baseline_sizes"]
 
-    print("Calibrating permutation null (derangements only)")
+    print("Calibrating permutation null (derangements only, within condition)")
     derange_summary = calibrate_permutations(
         P=P,
         Z=Z,
@@ -478,9 +515,10 @@ def main() -> None:
         scheme="derangements",
         n_perms=DERANGEMENT_PERMS,
         rng_seed=RNG_SEED_DERANGE,
+        groups=groups,
     )
-
-    print("Calibrating permutation null (all permutations)")
+    
+    print("Calibrating permutation null (all permutations, within condition)")
     allperm_summary = calibrate_permutations(
         P=P,
         Z=Z,
@@ -491,6 +529,7 @@ def main() -> None:
         scheme="all_permutations",
         n_perms=ALL_PERMS,
         rng_seed=RNG_SEED_ALLPERM,
+        groups=groups,
     )
 
     print(f"Writing per-run leak scores to {PER_RUN_LEAK_TSV}")
