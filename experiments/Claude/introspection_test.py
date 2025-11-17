@@ -839,6 +839,69 @@ def run_left_tail_hotness_per_condition(
     return results
 
 
+def run_sandbagging_intensity_per_condition(
+    p_sand: np.ndarray,
+    conditions: np.ndarray,
+    n_null_samples: int,
+    rng_seed: int,
+) -> dict:
+    """Test for excess sandbagging evidence within each condition.
+
+    The per-run sandbagging evidence scores are the permutation-calibrated
+    one-sided p-values "per_run_p_perm_low" obtained from derangements. Under
+    the no-sandbagging null, these p-values are Uniform(0, 1). For each
+    condition separately we therefore compare the observed mean -log10(p) to a
+    null built by repeatedly sampling the same number of uniform p-values.
+    """
+
+    p_sand = np.asarray(p_sand, dtype=float)
+    cond = np.asarray(conditions)
+    rng = np.random.default_rng(rng_seed)
+    results = {}
+
+    for label in np.unique(cond):
+        mask = np.isfinite(p_sand) & (cond == label)
+        p_cond = p_sand[mask]
+        if p_cond.size == 0:
+            results[label] = {
+                "n_runs": 0,
+                "T_obs": np.nan,
+                "mean_null": np.nan,
+                "std_null": np.nan,
+                "p_heavy": np.nan,
+                "p_light": np.nan,
+                "p_two_sided": np.nan,
+            }
+            continue
+
+        w = -np.log10(p_cond)
+        T_obs = float(np.mean(w))
+
+        n = p_cond.size
+        T_null = np.empty(n_null_samples, dtype=float)
+        for b in range(n_null_samples):
+            u = rng.random(n)
+            T_null[b] = float(np.mean(-np.log10(u)))
+
+        mean_null = float(np.mean(T_null))
+        std_null = float(np.std(T_null, ddof=0))
+        p_heavy = (1.0 + np.sum(T_null >= T_obs)) / (1.0 + n_null_samples)
+        p_light = (1.0 + np.sum(T_null <= T_obs)) / (1.0 + n_null_samples)
+        p_two_sided = 2.0 * min(p_heavy, p_light)
+
+        results[label] = {
+            "n_runs": int(n),
+            "T_obs": T_obs,
+            "mean_null": mean_null,
+            "std_null": std_null,
+            "p_heavy": float(p_heavy),
+            "p_light": float(p_light),
+            "p_two_sided": float(p_two_sided),
+        }
+
+    return results
+
+
 def run_directional_sandbag_tests(
     P: np.ndarray,
     P_low: np.ndarray,
@@ -1174,17 +1237,19 @@ def main() -> None:
         f"N_neg={dir_tests['N_neg_obs']}, N_pos={dir_tests['N_pos_obs']}, p_perm = {dir_tests['p_sign_more_negative']:.5f}"
     )
 
-    print("\nRunning Berk–Jones enrichment test on baseline left-tail p-values")
+    print(
+        "\nRunning Berk–Jones enrichment test on permutation-calibrated sandbagging p-values"
+    )
     bj_cond = run_bj_condition_enrichment(
-        p_left=p_obs_low,
+        p_left=derange_summary["per_run_p_perm_low"],
         conditions=conditions,
         n_perms=LABEL_PERMS,
         rng_seed=RNG_SEED_LABEL,
     )
 
-    print("Berk–Jones condition-enrichment on left-tail baseline p_down")
+    print("Berk–Jones condition-enrichment on permutation-calibrated sandbagging p-values")
     print(
-        "  BJ statistic (control enriched among small p_down): "
+        "  BJ statistic (control enriched among small sandbagging p-values): "
         f"{bj_cond['bj_obs']:.4f}"
     )
     print(
@@ -1223,36 +1288,35 @@ def main() -> None:
     )
 
     print(
-        "Running left-tail tests within each condition "
-        "(empirical within-condition resampling null, using one-sided derangement p-values)"
+        "Running sandbagging-intensity tests within each condition "
+        "(using permutation-calibrated low-side p-values vs Uniform(0,1) null)"
     )
-    left_tail_tests = run_left_tail_hotness_per_condition(
-        derange_summary["per_run_z_perm_calibrated"],
-        derange_summary["per_run_p_perm"],
+    sandbag_tests = run_sandbagging_intensity_per_condition(
+        derange_summary["per_run_p_perm_low"],
         conditions,
         LABEL_PERMS,
         RNG_SEED_LABEL,
     )
 
-    for label, res in left_tail_tests.items():
+    for label, res in sandbag_tests.items():
         print()
-        print(f"Left tail in {label} runs")
-        print(f"  number of runs with z < 0: {res['m_neg']}")
-        print(f"  mean -log10(one-sided perm p) in left tail: {res['T_obs']:.4f}")
+        print(f"Sandbagging intensity in {label} runs")
+        print(f"  number of runs: {res['n_runs']}")
+        print(f"  mean -log10(p_sand) : {res['T_obs']:.4f}")
         print(
-            "  null mean (resampled left tail within condition): "
+            "  Uniform(0,1) null mean ± std: "
             f"{res['mean_null']:.4f} ± {res['std_null']:.4f}"
         )
         print(
-            "  one-sided p_perm (left tail hotter than within-condition null): "
+            "  one-sided p_heavy (more sandbagging than null): "
             f"{res['p_heavy']:.5f}"
         )
         print(
-            "  one-sided p_perm (left tail blander/sandbagged vs within-condition null): "
+            "  one-sided p_light (less sandbagging than null): "
             f"{res['p_light']:.5f}"
         )
         print(
-            "  two-sided p_perm for left-tail deviation from within-condition null: "
+            "  two-sided p-value for deviation from null: "
             f"{res['p_two_sided']:.5f}"
         )
 
