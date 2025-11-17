@@ -543,12 +543,15 @@ def _bj_scan(p_values: np.ndarray, is_group_A: np.ndarray, max_p: float = 0.5) -
 
 
 def run_condition_difference_tests(
-    z_perm_derange: np.ndarray,
+    Z: np.ndarray,
+    z_obs: np.ndarray,
     conditions: np.ndarray,
-    n_label_perms: int,
+    groups: list,
+    n_perms: int,
     rng_seed: int,
 ) -> dict:
-    z_perm_derange = np.asarray(z_perm_derange, dtype=float)
+    # z_obs is the observed per-run z (e.g. z_obs from compute_per_run_observed)
+    z_obs = np.asarray(z_obs, dtype=float)
     cond = np.asarray(conditions)
 
     unique = np.unique(cond)
@@ -558,8 +561,11 @@ def run_condition_difference_tests(
     exp_mask = (cond == "experimental")
     ctrl_mask = (cond == "control")
 
-    valid = np.isfinite(z_perm_derange) & (exp_mask | ctrl_mask)
-    z = z_perm_derange[valid]
+    valid = np.isfinite(z_obs) & (exp_mask | ctrl_mask)
+    if not np.any(valid):
+        raise ValueError("No valid z_obs values for condition skew tests")
+
+    z_obs_valid = z_obs[valid]
     cond_valid = cond[valid]
 
     exp_mask_valid = (cond_valid == "experimental")
@@ -568,39 +574,45 @@ def run_condition_difference_tests(
     if not np.any(exp_mask_valid) or not np.any(ctrl_mask_valid):
         raise ValueError("Need at least one experimental and one control run for tests")
 
-    z_exp = z[exp_mask_valid]
-    z_ctrl = z[ctrl_mask_valid]
+    # Observed skew within each condition (labels fixed)
+    z_exp_obs = z_obs_valid[exp_mask_valid]
+    z_ctrl_obs = z_obs_valid[ctrl_mask_valid]
 
-    skew_exp_obs = float(stats.skew(z_exp, bias=False))
-    skew_ctrl_obs = float(stats.skew(z_ctrl, bias=False))
+    skew_exp_obs = float(stats.skew(z_exp_obs, bias=False))
+    skew_ctrl_obs = float(stats.skew(z_ctrl_obs, bias=False))
     delta_skew_obs = skew_exp_obs - skew_ctrl_obs
 
+    # Build null by deranging guesses within condition (groups),
+    # then recomputing per-condition skew from z_perm = Z[i, perm[i]].
     rng = np.random.default_rng(rng_seed)
-    n = z.shape[0]
+    n = Z.shape[0]
     idx = np.arange(n, dtype=int)
-    n_exp = int(exp_mask_valid.sum())
 
-    skew_exp_null = np.empty(n_label_perms, dtype=float)
-    skew_ctrl_null = np.empty(n_label_perms, dtype=float)
-    delta_skew_null = np.empty(n_label_perms, dtype=float)
+    skew_exp_null = np.empty(n_perms, dtype=float)
+    skew_ctrl_null = np.empty(n_perms, dtype=float)
+    delta_skew_null = np.empty(n_perms, dtype=float)
 
-    for b in range(n_label_perms):
-        perm = rng.permutation(idx)
+    for b in range(n_perms):
+        # permutes guess indices within each condition group
+        perm = blockwise_derangement(groups, rng, n)
 
-        perm_exp_mask = np.zeros(n, dtype=bool)
-        perm_exp_mask[perm[:n_exp]] = True
-        perm_ctrl_mask = ~perm_exp_mask
+        # per-run z under this deranged pairing
+        z_perm_full = Z[idx, perm]
 
-        z_exp_perm = z[perm_exp_mask]
-        z_ctrl_perm = z[perm_ctrl_mask]
+        z_perm_valid = z_perm_full[valid]
+        z_exp_perm = z_perm_valid[exp_mask_valid]
+        z_ctrl_perm = z_perm_valid[ctrl_mask_valid]
 
-        skew_exp_null[b] = float(stats.skew(z_exp_perm, bias=False))
-        skew_ctrl_null[b] = float(stats.skew(z_ctrl_perm, bias=False))
-        delta_skew_null[b] = skew_exp_null[b] - skew_ctrl_null[b]
+        skew_e = float(stats.skew(z_exp_perm, bias=False))
+        skew_c = float(stats.skew(z_ctrl_perm, bias=False))
 
-    p_exp_two_sided = (1.0 + np.sum(np.abs(skew_exp_null) >= abs(skew_exp_obs))) / (1.0 + n_label_perms)
-    p_ctrl_two_sided = (1.0 + np.sum(np.abs(skew_ctrl_null) >= abs(skew_ctrl_obs))) / (1.0 + n_label_perms)
-    p_delta_one_sided = (1.0 + np.sum(delta_skew_null >= delta_skew_obs)) / (1.0 + n_label_perms)
+        skew_exp_null[b] = skew_e
+        skew_ctrl_null[b] = skew_c
+        delta_skew_null[b] = skew_e - skew_c
+
+    p_exp_two_sided = (1.0 + np.sum(np.abs(skew_exp_null)  >= abs(skew_exp_obs)))  / (1.0 + n_perms)
+    p_ctrl_two_sided = (1.0 + np.sum(np.abs(skew_ctrl_null) >= abs(skew_ctrl_obs))) / (1.0 + n_perms)
+    p_delta_one_sided = (1.0 + np.sum(delta_skew_null >= delta_skew_obs))          / (1.0 + n_perms)
 
     return {
         "skew_exp_obs": skew_exp_obs,
@@ -610,7 +622,6 @@ def run_condition_difference_tests(
         "delta_skew_obs": delta_skew_obs,
         "delta_skew_p_one_sided": p_delta_one_sided,
     }
-
 
 def main() -> None:
     print(f"Loading runs from {RUNS_TSV}")
@@ -695,12 +706,13 @@ def main() -> None:
         n_allperm=ALL_PERMS,
     )
 
-    print("Running experimental vs control label-permutation tests using z_perm_calibrated_derangements")
-    z_perm_derange = derange_summary["per_run_z_perm_calibrated"]
+    print("Running experimental vs control skew tests using within-condition derangement null")
     cond_tests = run_condition_difference_tests(
-        z_perm_derange,
-        conditions,
-        n_label_perms=LABEL_PERMS,
+        Z=Z,
+        z_obs=z_obs,
+        conditions=conditions,
+        groups=groups,
+        n_perms=LABEL_PERMS,
         rng_seed=RNG_SEED_LABEL,
     )
 
