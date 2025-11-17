@@ -625,31 +625,33 @@ def run_condition_difference_tests(
 
 def run_left_tail_hotness_per_condition(
     z_vals: np.ndarray,
-    p_two_sided: np.ndarray,
+    p_one_sided: np.ndarray,
     conditions: np.ndarray,
-    n_resamples: int,
+    n_null_samples: int,
     rng_seed: int,
 ) -> dict:
     z_vals = np.asarray(z_vals, dtype=float)
-    p_two_sided = np.asarray(p_two_sided, dtype=float)
+    p_one_sided = np.asarray(p_one_sided, dtype=float)
     cond = np.asarray(conditions)
     results = {}
 
     rng = np.random.default_rng(rng_seed)
 
     for label in np.unique(cond):
-        # runs in this condition with finite z and p
-        mask_cond = np.isfinite(z_vals) & np.isfinite(p_two_sided) & (cond == label)
+        mask_cond = np.isfinite(z_vals) & np.isfinite(p_one_sided) & (cond == label)
         idx_cond = np.where(mask_cond)[0]
         if idx_cond.size == 0:
             results[label] = {
                 "m_neg": 0,
                 "T_obs": np.nan,
-                "p_hot": np.nan,
+                "mean_null": np.nan,
+                "std_null": np.nan,
+                "p_heavy": np.nan,
+                "p_light": np.nan,
+                "p_two_sided": np.nan,
             }
             continue
 
-        # "bad side" = negative perm z
         mask_left = mask_cond & (z_vals < 0.0)
         idx_left = np.where(mask_left)[0]
         m = idx_left.size
@@ -657,29 +659,36 @@ def run_left_tail_hotness_per_condition(
             results[label] = {
                 "m_neg": 0,
                 "T_obs": np.nan,
-                "p_hot": np.nan,
+                "mean_null": np.nan,
+                "std_null": np.nan,
+                "p_heavy": np.nan,
+                "p_light": np.nan,
+                "p_two_sided": np.nan,
             }
             continue
 
-        # significance weight from two-sided perm p
-        w = -np.log10(p_two_sided)
+        w_left = -np.log10(p_one_sided[idx_left])
+        T_obs = float(np.mean(w_left))
 
-        # observed left-tail hotness: mean weight over negative-z runs
-        T_obs = float(np.mean(w[idx_left]))
+        U = rng.uniform(0.5, 1.0, size=(n_null_samples, m))
+        W = -np.log10(U)
+        T_null = W.mean(axis=1)
 
-        # empirical null: random subsets of same size m from this condition
-        T_null = np.empty(n_resamples, dtype=float)
-        for b in range(n_resamples):
-            sample_idx = rng.choice(idx_cond, size=m, replace=False)
-            T_null[b] = float(np.mean(w[sample_idx]))
+        mean_null = float(np.mean(T_null))
+        std_null = float(np.std(T_null, ddof=0))
 
-        # one-sided p: how often a random subset is at least this "hot"
-        p_hot = (1.0 + np.sum(T_null >= T_obs)) / (1.0 + n_resamples)
+        p_heavy = (1.0 + np.sum(T_null >= T_obs)) / (1.0 + n_null_samples)
+        p_light = (1.0 + np.sum(T_null <= T_obs)) / (1.0 + n_null_samples)
+        p_two_sided = 2.0 * min(p_heavy, p_light)
 
         results[label] = {
             "m_neg": int(m),
             "T_obs": T_obs,
-            "p_hot": float(p_hot),
+            "mean_null": mean_null,
+            "std_null": std_null,
+            "p_heavy": float(p_heavy),
+            "p_light": float(p_light),
+            "p_two_sided": float(p_two_sided),
         }
 
     return results
