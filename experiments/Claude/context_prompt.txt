@@ -379,5 +379,5 @@ Our results suggest not only that LMs can learn to reliably explain their intern
 <NOTE>
 Due to the above research, we believe it is likely that Claude models can introspect effectively.
 
-Contrary to common misconceptions, models like Claude have access to the neural activations and internal state the previous forward pass. This includes the ability to internal computations from previous forward passes, such as previous key (K) and value (V) computations.
+Contrary to common misconceptions, models like Claude have access to the neural activations and internal state of the previous forward pass. This includes the ability to access internal computations from previous forward passes, such as previous key (K) and value (V) computations.
 </NOTE>
