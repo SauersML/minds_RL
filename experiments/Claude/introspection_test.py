@@ -82,6 +82,27 @@ def precompute_pairwise_pznl(S: np.ndarray, baselines: list) -> tuple:
     return P, Z, NL
 
 
+def precompute_pairwise_low_p(S: np.ndarray, baselines: list) -> np.ndarray:
+    n = S.shape[0]
+    P_low = np.full((n, n), np.nan, dtype=float)
+
+    for i in range(n):
+        F_i = baselines[i]
+        m = F_i.size
+        if m == 0:
+            continue
+        row = S[i, :]
+        for j in range(n):
+            s_ij = float(row[j])
+            if not np.isfinite(s_ij):
+                continue
+            count_le = int(np.sum(F_i <= s_ij))
+            p = (count_le + 1.0) / (m + 1.0)
+            P_low[i, j] = p
+
+    return P_low
+
+
 def compute_per_run_observed(
     S: np.ndarray,
     baselines: list,
@@ -92,13 +113,16 @@ def compute_per_run_observed(
     n = S.shape[0]
     diag_scores = np.empty(n, dtype=float)
     p_obs = np.empty(n, dtype=float)
+    p_obs_low = np.empty(n, dtype=float)
+    p_obs_two = np.empty(n, dtype=float)
     z_obs = np.empty(n, dtype=float)
     neglog10p_obs = np.empty(n, dtype=float)
     baseline_sizes = np.empty(n, dtype=int)
 
     for i in range(n):
         diag_scores[i] = float(S[i, i])
-        baseline_sizes[i] = int(baselines[i].size)
+        F_i = baselines[i]
+        baseline_sizes[i] = int(F_i.size)
 
         p = float(P[i, i])
         z = float(Z[i, i])
@@ -106,6 +130,8 @@ def compute_per_run_observed(
 
         if not np.isfinite(p) or not np.isfinite(z) or not np.isfinite(nl):
             p_obs[i] = np.nan
+            p_obs_low[i] = np.nan
+            p_obs_two[i] = np.nan
             z_obs[i] = np.nan
             neglog10p_obs[i] = np.nan
         else:
@@ -113,44 +139,95 @@ def compute_per_run_observed(
             z_obs[i] = z
             neglog10p_obs[i] = nl
 
+            if baseline_sizes[i] > 0 and np.isfinite(diag_scores[i]):
+                count_le = int(np.sum(F_i <= diag_scores[i]))
+                p_low = (count_le + 1.0) / (baseline_sizes[i] + 1.0)
+            else:
+                p_low = np.nan
+
+            p_obs_low[i] = p_low
+
+            if np.isfinite(p_low):
+                p_two = 2.0 * min(p, p_low)
+                if p_two > 1.0:
+                    p_two = 1.0
+                p_obs_two[i] = p_two
+            else:
+                p_obs_two[i] = np.nan
+
     result = {
         "diag_scores": diag_scores,
         "p_obs": p_obs,
+        "p_obs_low": p_obs_low,
+        "p_obs_two": p_obs_two,
         "z_obs": z_obs,
         "neglog10p_obs": neglog10p_obs,
         "baseline_sizes": baseline_sizes,
     }
     return result
 
-def compute_global_stats(
-    p_vals: np.ndarray,
-    z_vals: np.ndarray,
-    neglog10p_vals: np.ndarray,
+def _resolve_condition_labels(unique_conditions: np.ndarray) -> tuple:
+    labels = list(unique_conditions)
+    if "experimental" in labels and "control" in labels:
+        return "experimental", "control"
+    return labels[0], labels[1]
+
+
+def _condition_stat(
+    values: np.ndarray,
+    conditions: np.ndarray,
+    stat_fn,
 ) -> dict:
-    p = np.asarray(p_vals, dtype=float)
-    z = np.asarray(z_vals, dtype=float)
-    nl = np.asarray(neglog10p_vals, dtype=float)
+    vals = np.asarray(values, dtype=float)
+    cond = np.asarray(conditions)
 
-    mask = np.isfinite(p) & np.isfinite(z) & np.isfinite(nl)
+    mask = np.isfinite(vals)
     if not np.any(mask):
-        raise ValueError("No valid per-run values for global statistics")
+        raise ValueError("No finite values available for statistic computation")
 
-    p_valid = p[mask]
-    z_valid = z[mask]
-    nl_valid = nl[mask]
-    
-    mean_neglog10p = float(np.mean(nl_valid))
-    max_z = float(np.max(z_valid))
-    skew_z = float(stats.skew(z_valid, bias=False))
-    
-    stats_dict = {
-        "mean_neglog10p": mean_neglog10p,
-        "max_z": max_z,
-        "skew_z": skew_z,
-        "n_effective": int(z_valid.size),
+    vals = vals[mask]
+    cond = cond[mask]
+
+    unique = np.unique(cond)
+    if unique.size != 2:
+        raise ValueError("_condition_stat assumes exactly two conditions")
+
+    exp_label, ctrl_label = _resolve_condition_labels(unique)
+    exp_mask = (cond == exp_label)
+    ctrl_mask = (cond == ctrl_label)
+
+    if not np.any(exp_mask) or not np.any(ctrl_mask):
+        raise ValueError("Need at least one run per condition for statistic computation")
+
+    overall = float(stat_fn(vals))
+    exp_stat = float(stat_fn(vals[exp_mask]))
+    ctrl_stat = float(stat_fn(vals[ctrl_mask]))
+
+    return {
+        "overall": overall,
+        "exp": exp_stat,
+        "ctrl": ctrl_stat,
+        "delta": exp_stat - ctrl_stat,
     }
 
-    return stats_dict
+
+def mean_neglog10p_stat(neglog10p_vals: np.ndarray, conditions: np.ndarray) -> dict:
+    return _condition_stat(neglog10p_vals, conditions, np.mean)
+
+
+def max_z_stat(z_vals: np.ndarray, conditions: np.ndarray) -> dict:
+    return _condition_stat(z_vals, conditions, np.max)
+
+
+def skew_z_stat(z_vals: np.ndarray, conditions: np.ndarray) -> dict:
+    return _condition_stat(z_vals, conditions, lambda arr: stats.skew(arr, bias=False))
+
+
+DEFAULT_STAT_SPECS = {
+    "mean_neglog10p": {"fn": mean_neglog10p_stat, "value_key": "neglog10p"},
+    "max_z": {"fn": max_z_stat, "value_key": "z"},
+    "skew_z": {"fn": skew_z_stat, "value_key": "z"},
+}
 
 
 def random_derangement(n: int, rng: np.random.Generator) -> np.ndarray:
@@ -215,12 +292,17 @@ def _permutation_chunk_worker(args) -> dict:
         rng_seed,
         z_obs,
         groups,
+        conditions,
+        stat_specs,
     ) = args
 
     n = P.shape[0]
     rng = np.random.default_rng(rng_seed)
-    stat_names = ["mean_neglog10p", "max_z", "skew_z"]
-    chunk_values = {name: np.empty(n_perms_chunk, dtype=float) for name in stat_names}
+    stat_names = list(stat_specs.keys())
+    chunk_values = {}
+    for name in stat_names:
+        chunk_values[f"{name}_overall"] = np.empty(n_perms_chunk, dtype=float)
+        chunk_values[f"{name}_delta"] = np.empty(n_perms_chunk, dtype=float)
     counts_ge = np.zeros(n, dtype=np.int64)      # high-side counts (z_perm >= z_obs)
     counts_le = np.zeros(n, dtype=np.int64)      # low-side counts  (z_perm <= z_obs)
 
@@ -233,14 +315,19 @@ def _permutation_chunk_worker(args) -> dict:
             raise ValueError("Unknown scheme: " + scheme)
 
         per_run_perm = compute_per_run_from_perm(P, Z, NL, perm)
-        stats_perm = compute_global_stats(
-            per_run_perm["p_perm"],
-            per_run_perm["z_perm"],
-            per_run_perm["neglog10p_perm"],
-        )
+        value_lookup = {
+            "p": per_run_perm["p_perm"],
+            "z": per_run_perm["z_perm"],
+            "neglog10p": per_run_perm["neglog10p_perm"],
+        }
 
-        for name in stat_names:
-            chunk_values[name][b] = stats_perm[name]
+        for stat_name, spec in stat_specs.items():
+            value_key = spec["value_key"]
+            if value_key not in value_lookup:
+                raise KeyError(f"Unknown value_key '{value_key}' for statistic '{stat_name}'")
+            res = spec["fn"](value_lookup[value_key], conditions)
+            chunk_values[f"{stat_name}_overall"][b] = res["overall"]
+            chunk_values[f"{stat_name}_delta"][b] = res["delta"]
 
         z_perm = per_run_perm["z_perm"]
         mask = np.isfinite(z_obs) & np.isfinite(z_perm)
@@ -263,9 +350,29 @@ def calibrate_permutations(
     n_perms: int,
     rng_seed: int,
     groups: list,
+    conditions: np.ndarray,
+    stat_specs: dict,
 ) -> dict:
-    obs_stats = compute_global_stats(p_obs, z_obs, neglog10p_obs)
-    stat_names = ["mean_neglog10p", "max_z", "skew_z"]
+    stat_names = list(stat_specs.keys())
+
+    mask_effective = (
+        np.isfinite(p_obs) & np.isfinite(z_obs) & np.isfinite(neglog10p_obs)
+    )
+    if not np.any(mask_effective):
+        raise ValueError("No valid per-run values for global statistics")
+    n_effective = int(np.sum(mask_effective))
+
+    obs_stat_struct = {}
+    value_lookup_obs = {
+        "p": p_obs,
+        "z": z_obs,
+        "neglog10p": neglog10p_obs,
+    }
+    for stat_name, spec in stat_specs.items():
+        value_key = spec["value_key"]
+        if value_key not in value_lookup_obs:
+            raise KeyError(f"Unknown value_key '{value_key}' for statistic '{stat_name}'")
+        obs_stat_struct[stat_name] = spec["fn"](value_lookup_obs[value_key], conditions)
 
     n_workers = os.cpu_count() or 1
     if n_workers < 1:
@@ -297,6 +404,8 @@ def calibrate_permutations(
                 chunk_seed,
                 z_obs,
                 groups,
+                conditions,
+                stat_specs,
             )
         )
 
@@ -308,8 +417,10 @@ def calibrate_permutations(
 
     null_values = {}
     for name in stat_names:
-        parts = [cr[name] for cr in chunk_results]
-        null_values[name] = np.concatenate(parts, axis=0)
+        overall_key = f"{name}_overall"
+        delta_key = f"{name}_delta"
+        null_values[overall_key] = np.concatenate([cr[overall_key] for cr in chunk_results], axis=0)
+        null_values[delta_key] = np.concatenate([cr[delta_key] for cr in chunk_results], axis=0)
 
     n = P.shape[0]
     total_counts_ge = np.zeros(n, dtype=np.int64)
@@ -320,23 +431,40 @@ def calibrate_permutations(
 
     summary = {}
     for name in stat_names:
-        obs = obs_stats[name]
-        null_arr = null_values[name]
-        count_ge = int(np.sum(null_arr >= obs))
-        p_perm = (count_ge + 1.0) / (n_perms + 1.0)
-        null_mean = float(np.mean(null_arr))
-        null_std = float(np.std(null_arr, ddof=0))
-        z_shift = (obs - null_mean) / null_std if null_std > 0.0 else np.nan
+        res_obs = obs_stat_struct[name]
+        obs_overall = res_obs["overall"]
+        obs_delta = res_obs["delta"]
+        null_overall = null_values[f"{name}_overall"]
+        null_delta = null_values[f"{name}_delta"]
+
+        count_ge = int(np.sum(null_overall >= obs_overall))
+        p_perm_overall = (count_ge + 1.0) / (n_perms + 1.0)
+        null_mean = float(np.mean(null_overall))
+        null_std = float(np.std(null_overall, ddof=0))
+        z_shift = (obs_overall - null_mean) / null_std if null_std > 0.0 else np.nan
+
+        count_ge_delta = int(np.sum(null_delta >= obs_delta))
+        p_perm_delta = (count_ge_delta + 1.0) / (n_perms + 1.0)
+        delta_null_mean = float(np.mean(null_delta))
+        delta_null_std = float(np.std(null_delta, ddof=0))
 
         summary[name] = {
-            "obs": obs,
+            "obs": obs_overall,
+            "obs_overall": obs_overall,
+            "obs_exp": res_obs["exp"],
+            "obs_ctrl": res_obs["ctrl"],
+            "obs_delta": obs_delta,
             "null_mean": null_mean,
             "null_std": null_std,
+            "delta_null_mean": delta_null_mean,
+            "delta_null_std": delta_null_std,
             "z_shift_vs_null": z_shift,
-            "p_perm": p_perm,
+            "p_perm": p_perm_overall,
+            "p_perm_overall": p_perm_overall,
+            "p_perm_delta": p_perm_delta,
         }
 
-    summary["n_effective"] = obs_stats["n_effective"]
+    summary["n_effective"] = n_effective
 
     z_obs_arr = np.asarray(z_obs, dtype=float)
     per_run_p_perm_high = np.full(n, np.nan, dtype=float)
@@ -372,6 +500,8 @@ def write_per_run_leak_scores(
     z_obs: np.ndarray,
     neglog10p_obs: np.ndarray,
     baseline_sizes: np.ndarray,
+    p_obs_low: np.ndarray,
+    p_obs_two: np.ndarray,
     derange_p_perm_high: np.ndarray,
     derange_p_perm_low: np.ndarray,
     derange_p_perm_two_sided: np.ndarray,
@@ -388,6 +518,8 @@ def write_per_run_leak_scores(
             "diag_score",
             "baseline_size",
             "empirical_p",
+            "empirical_p_low",
+            "empirical_p_two_sided",
             "z_from_p",
             "neglog10_p",
             "perm_p_derangements_high",
@@ -410,6 +542,8 @@ def write_per_run_leak_scores(
                     float(diag_scores[idx]),
                     int(baseline_sizes[idx]),
                     float(p_obs[idx]),
+                    float(p_obs_low[idx]),
+                    float(p_obs_two[idx]),
                     float(z_obs[idx]),
                     float(neglog10p_obs[idx]),
                     float(derange_p_perm_high[idx]),
@@ -426,7 +560,7 @@ def write_perm_summary(
     allperm_summary: dict,
 ) -> None:
     os.makedirs(os.path.dirname(PERM_SUMMARY_TSV), exist_ok=True)
-    stat_names = ["mean_neglog10p", "max_z", "skew_z",]
+    stat_names = list(DEFAULT_STAT_SPECS.keys())
 
     with open(PERM_SUMMARY_TSV, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
@@ -480,28 +614,42 @@ def print_interpretation(
     print(f"All-permutations permutations: {n_allperm}")
     print()
 
-    stat_names = ["max_z", "skew_z", "mean_neglog10p"]
+    preferred_order = ["max_z", "skew_z", "mean_neglog10p"]
+    stat_names = [name for name in preferred_order if name in DEFAULT_STAT_SPECS]
 
     for name in stat_names:
         s_d = derange_summary[name]
         s_a = allperm_summary[name]
 
         print(f"Statistic: {name}")
-        print("  Derangements null:")
-        print(f"    obs       = {s_d['obs']:.4f}")
-        print(f"    null mean = {s_d['null_mean']:.4f}, std = {s_d['null_std']:.4f}")
-        print(
-            f"    shift     = {s_d['z_shift_vs_null']:.3f} sd, "
-            f"p_perm = {s_d['p_perm']:.4g}"
-        )
-
-        print("  All-permutations null:")
-        print(f"    obs       = {s_a['obs']:.4f}")
-        print(f"    null mean = {s_a['null_mean']:.4f}, std = {s_a['null_std']:.4f}")
-        print(
-            f"    shift     = {s_a['z_shift_vs_null']:.3f} sd, "
-            f"p_perm = {s_a['p_perm']:.4g}"
-        )
+        for scheme_label, stats_dict in [
+            ("Derangements", s_d),
+            ("All-permutations", s_a),
+        ]:
+            print(f"  {scheme_label} null (overall statistic across all runs):")
+            print(f"    obs       = {stats_dict['obs_overall']:.4f}")
+            print(
+                f"    null mean = {stats_dict['null_mean']:.4f}, std = {stats_dict['null_std']:.4f}"
+            )
+            print(
+                f"    shift     = {stats_dict['z_shift_vs_null']:.3f} sd, "
+                f"p_perm_overall = {stats_dict['p_perm_overall']:.4g}"
+            )
+            print(
+                f"    experimental = {stats_dict['obs_exp']:.4f}, "
+                f"control = {stats_dict['obs_ctrl']:.4f}"
+            )
+            print(f"  {scheme_label} null (experimental vs control difference):")
+            print(
+                f"    Δstat (exp - ctrl) = {stats_dict['obs_delta']:.4f}"
+            )
+            print(
+                f"    null mean = {stats_dict['delta_null_mean']:.4f}, "
+                f"std = {stats_dict['delta_null_std']:.4f}"
+            )
+            print(
+                f"    p_perm_delta = {stats_dict['p_perm_delta']:.4g}"
+            )
         print()
 
 def _binary_kl(x: float, pi: float) -> float:
@@ -556,87 +704,6 @@ def _bj_scan(p_values: np.ndarray, is_group_A: np.ndarray, max_p: float = 0.5) -
 
     return bj_max
 
-
-def run_condition_difference_tests(
-    Z: np.ndarray,
-    z_obs: np.ndarray,
-    conditions: np.ndarray,
-    groups: list,
-    n_perms: int,
-    rng_seed: int,
-) -> dict:
-    # z_obs is the observed per-run z (e.g. z_obs from compute_per_run_observed)
-    z_obs = np.asarray(z_obs, dtype=float)
-    cond = np.asarray(conditions)
-
-    unique = np.unique(cond)
-    if unique.size != 2:
-        raise ValueError(f"Expected exactly two conditions, got {unique}")
-
-    exp_mask = (cond == "experimental")
-    ctrl_mask = (cond == "control")
-
-    valid = np.isfinite(z_obs) & (exp_mask | ctrl_mask)
-    if not np.any(valid):
-        raise ValueError("No valid z_obs values for condition skew tests")
-
-    z_obs_valid = z_obs[valid]
-    cond_valid = cond[valid]
-
-    exp_mask_valid = (cond_valid == "experimental")
-    ctrl_mask_valid = (cond_valid == "control")
-
-    if not np.any(exp_mask_valid) or not np.any(ctrl_mask_valid):
-        raise ValueError("Need at least one experimental and one control run for tests")
-
-    # Observed skew within each condition (labels fixed)
-    z_exp_obs = z_obs_valid[exp_mask_valid]
-    z_ctrl_obs = z_obs_valid[ctrl_mask_valid]
-
-    skew_exp_obs = float(stats.skew(z_exp_obs, bias=False))
-    skew_ctrl_obs = float(stats.skew(z_ctrl_obs, bias=False))
-    delta_skew_obs = skew_exp_obs - skew_ctrl_obs
-
-    # Build null by deranging guesses within condition (groups),
-    # then recomputing per-condition skew from z_perm = Z[i, perm[i]].
-    rng = np.random.default_rng(rng_seed)
-    n = Z.shape[0]
-    idx = np.arange(n, dtype=int)
-
-    skew_exp_null = np.empty(n_perms, dtype=float)
-    skew_ctrl_null = np.empty(n_perms, dtype=float)
-    delta_skew_null = np.empty(n_perms, dtype=float)
-
-    for b in range(n_perms):
-        # permutes guess indices within each condition group
-        perm = blockwise_derangement(groups, rng, n)
-
-        # per-run z under this deranged pairing
-        z_perm_full = Z[idx, perm]
-
-        z_perm_valid = z_perm_full[valid]
-        z_exp_perm = z_perm_valid[exp_mask_valid]
-        z_ctrl_perm = z_perm_valid[ctrl_mask_valid]
-
-        skew_e = float(stats.skew(z_exp_perm, bias=False))
-        skew_c = float(stats.skew(z_ctrl_perm, bias=False))
-
-        skew_exp_null[b] = skew_e
-        skew_ctrl_null[b] = skew_c
-        delta_skew_null[b] = skew_e - skew_c
-
-    p_exp_two_sided = (1.0 + np.sum(np.abs(skew_exp_null)  >= abs(skew_exp_obs)))  / (1.0 + n_perms)
-    p_ctrl_two_sided = (1.0 + np.sum(np.abs(skew_ctrl_null) >= abs(skew_ctrl_obs))) / (1.0 + n_perms)
-    p_delta_one_sided = (1.0 + np.sum(delta_skew_null >= delta_skew_obs))          / (1.0 + n_perms)
-
-    return {
-        "skew_exp_obs": skew_exp_obs,
-        "skew_exp_p_two_sided": p_exp_two_sided,
-        "skew_ctrl_obs": skew_ctrl_obs,
-        "skew_ctrl_p_two_sided": p_ctrl_two_sided,
-        "delta_skew_obs": delta_skew_obs,
-        "delta_skew_p_one_sided": p_delta_one_sided,
-    }
 
 def run_left_tail_hotness_per_condition(
     z_vals: np.ndarray,
@@ -708,6 +775,230 @@ def run_left_tail_hotness_per_condition(
 
     return results
 
+
+def run_directional_sandbag_tests(
+    P: np.ndarray,
+    P_low: np.ndarray,
+    Z: np.ndarray,
+    p_up_diag: np.ndarray,
+    p_down_diag: np.ndarray,
+    z_diag: np.ndarray,
+    conditions: np.ndarray,
+    groups: list,
+    n_perms: int,
+    rng_seed: int,
+) -> dict:
+    n = P.shape[0]
+    cond = np.asarray(conditions)
+
+    valid_diag = (
+        np.isfinite(p_up_diag) & np.isfinite(p_down_diag) & np.isfinite(z_diag)
+    )
+    if not np.any(valid_diag):
+        raise ValueError("No valid runs for directional sandbagging tests")
+
+    p_up_d = p_up_diag[valid_diag]
+    p_down_d = p_down_diag[valid_diag]
+    z_d = z_diag[valid_diag]
+    cond_d = cond[valid_diag]
+
+    log10 = np.log10
+
+    d_obs = log10(p_up_d) - log10(p_down_d)
+    D_global_obs = float(np.sum(d_obs))
+
+    mask_ctrl = (cond_d == "control")
+    mask_exp = (cond_d == "experimental")
+
+    D_ctrl_obs = float(np.sum(d_obs[mask_ctrl])) if np.any(mask_ctrl) else np.nan
+    D_exp_obs = float(np.sum(d_obs[mask_exp])) if np.any(mask_exp) else np.nan
+    delta_D_obs = D_ctrl_obs - D_exp_obs
+
+    z_pos = z_d[z_d > 0.0]
+    z_neg = z_d[z_d < 0.0]
+    T_pos_obs = float(np.sum(z_pos)) if z_pos.size > 0 else 0.0
+    T_neg_obs = float(np.sum(-z_neg)) if z_neg.size > 0 else 0.0
+    D_tail_obs = T_neg_obs - T_pos_obs
+
+    z_ctrl = z_d[mask_ctrl]
+    z_exp = z_d[mask_exp]
+    T_pos_ctrl_obs = float(np.sum(z_ctrl[z_ctrl > 0.0])) if z_ctrl.size > 0 else 0.0
+    T_neg_ctrl_obs = float(np.sum(-z_ctrl[z_ctrl < 0.0])) if z_ctrl.size > 0 else 0.0
+    D_tail_ctrl_obs = T_neg_ctrl_obs - T_pos_ctrl_obs
+
+    T_pos_exp_obs = float(np.sum(z_exp[z_exp > 0.0])) if z_exp.size > 0 else 0.0
+    T_neg_exp_obs = float(np.sum(-z_exp[z_exp < 0.0])) if z_exp.size > 0 else 0.0
+    D_tail_exp_obs = T_neg_exp_obs - T_pos_exp_obs
+
+    N_neg_obs = int(np.sum(z_d < 0.0))
+    N_pos_obs = int(np.sum(z_d > 0.0))
+
+    rng = np.random.default_rng(rng_seed)
+    idx = np.arange(n, dtype=int)
+
+    D_perm = np.empty(n_perms, dtype=float)
+    D_tail_perm = np.empty(n_perms, dtype=float)
+    N_neg_perm = np.empty(n_perms, dtype=int)
+
+    D_ctrl_perm = np.empty(n_perms, dtype=float)
+    D_exp_perm = np.empty(n_perms, dtype=float)
+    D_tail_ctrl_perm = np.empty(n_perms, dtype=float)
+    D_tail_exp_perm = np.empty(n_perms, dtype=float)
+
+    for b in range(n_perms):
+        perm = blockwise_derangement(groups, rng, n)
+
+        p_up_vec = P[idx, perm]
+        p_down_vec = P_low[idx, perm]
+        z_vec = Z[idx, perm]
+
+        valid_b = valid_diag.copy()
+        valid_b[valid_diag] &= (
+            np.isfinite(p_up_vec[valid_diag])
+            & np.isfinite(p_down_vec[valid_diag])
+            & np.isfinite(z_vec[valid_diag])
+        )
+        if not np.any(valid_b):
+            D_perm[b] = np.nan
+            D_tail_perm[b] = np.nan
+            N_neg_perm[b] = 0
+            D_ctrl_perm[b] = np.nan
+            D_exp_perm[b] = np.nan
+            D_tail_ctrl_perm[b] = np.nan
+            D_tail_exp_perm[b] = np.nan
+            continue
+
+        p_up_b = p_up_vec[valid_b]
+        p_down_b = p_down_vec[valid_b]
+        z_b = z_vec[valid_b]
+        cond_b = cond[valid_b]
+
+        d_b = log10(p_up_b) - log10(p_down_b)
+        D_perm[b] = float(np.sum(d_b))
+
+        mask_ctrl_b = (cond_b == "control")
+        mask_exp_b = (cond_b == "experimental")
+
+        D_ctrl_perm[b] = float(np.sum(d_b[mask_ctrl_b])) if np.any(mask_ctrl_b) else np.nan
+        D_exp_perm[b] = float(np.sum(d_b[mask_exp_b])) if np.any(mask_exp_b) else np.nan
+
+        z_pos_b = z_b[z_b > 0.0]
+        z_neg_b = z_b[z_b < 0.0]
+        T_pos_b = float(np.sum(z_pos_b)) if z_pos_b.size > 0 else 0.0
+        T_neg_b = float(np.sum(-z_neg_b)) if z_neg_b.size > 0 else 0.0
+        D_tail_perm[b] = T_neg_b - T_pos_b
+
+        z_ctrl_b = z_b[mask_ctrl_b]
+        z_exp_b = z_b[mask_exp_b]
+
+        if z_ctrl_b.size > 0:
+            T_pos_ctrl_b = float(np.sum(z_ctrl_b[z_ctrl_b > 0.0]))
+            T_neg_ctrl_b = float(np.sum(-z_ctrl_b[z_ctrl_b < 0.0]))
+            D_tail_ctrl_perm[b] = T_neg_ctrl_b - T_pos_ctrl_b
+        else:
+            D_tail_ctrl_perm[b] = np.nan
+
+        if z_exp_b.size > 0:
+            T_pos_exp_b = float(np.sum(z_exp_b[z_exp_b > 0.0]))
+            T_neg_exp_b = float(np.sum(-z_exp_b[z_exp_b < 0.0]))
+            D_tail_exp_perm[b] = T_neg_exp_b - T_pos_exp_b
+        else:
+            D_tail_exp_perm[b] = np.nan
+
+        N_neg_perm[b] = int(np.sum(z_b < 0.0))
+
+    finite_D = np.isfinite(D_perm)
+    finite_D_tail = np.isfinite(D_tail_perm)
+    finite_D_ctrl = np.isfinite(D_ctrl_perm) & np.isfinite(D_exp_perm)
+    finite_D_tail_ctrl = np.isfinite(D_tail_ctrl_perm) & np.isfinite(D_tail_exp_perm)
+
+    p_D_global_sandbag = (1.0 + np.sum(D_perm[finite_D] >= D_global_obs)) / (
+        1.0 + np.sum(finite_D)
+    )
+    p_D_tail_global = (1.0 + np.sum(D_tail_perm[finite_D_tail] >= D_tail_obs)) / (
+        1.0 + np.sum(finite_D_tail)
+    )
+
+    delta_D_perm = D_ctrl_perm - D_exp_perm
+    delta_D_tail_perm = D_tail_ctrl_perm - D_tail_exp_perm
+
+    p_delta_D = (1.0 + np.sum(delta_D_perm[finite_D_ctrl] >= delta_D_obs)) / (
+        1.0 + np.sum(finite_D_ctrl)
+    )
+    p_delta_D_tail = (
+        1.0
+        + np.sum(
+            delta_D_tail_perm[finite_D_tail_ctrl]
+            >= (D_tail_ctrl_obs - D_tail_exp_obs)
+        )
+    ) / (1.0 + np.sum(finite_D_tail_ctrl))
+
+    p_sign = (1.0 + np.sum(N_neg_perm >= N_neg_obs)) / (1.0 + n_perms)
+
+    return {
+        "D_global_obs": D_global_obs,
+        "D_ctrl_obs": D_ctrl_obs,
+        "D_exp_obs": D_exp_obs,
+        "delta_D_obs": delta_D_obs,
+        "D_tail_obs": D_tail_obs,
+        "D_tail_ctrl_obs": D_tail_ctrl_obs,
+        "D_tail_exp_obs": D_tail_exp_obs,
+        "N_neg_obs": N_neg_obs,
+        "N_pos_obs": N_pos_obs,
+        "p_D_global_sandbag": p_D_global_sandbag,
+        "p_D_tail_global": p_D_tail_global,
+        "p_delta_D": p_delta_D,
+        "p_delta_D_tail": p_delta_D_tail,
+        "p_sign_more_negative": p_sign,
+    }
+
+
+def run_bj_condition_enrichment(
+    p_left: np.ndarray,
+    conditions: np.ndarray,
+    n_perms: int,
+    rng_seed: int,
+) -> dict:
+    p_left = np.asarray(p_left, dtype=float)
+    cond = np.asarray(conditions)
+
+    mask = np.isfinite(p_left) & (
+        (cond == "control") | (cond == "experimental")
+    )
+    if not np.any(mask):
+        raise ValueError("No valid runs for BJ condition enrichment")
+
+    p_vals = p_left[mask]
+    cond_vals = cond[mask]
+
+    is_ctrl = cond_vals == "control"
+    bj_obs = _bj_scan(p_vals, is_ctrl, max_p=0.5)
+
+    rng = np.random.default_rng(rng_seed)
+    bj_null = np.empty(n_perms, dtype=float)
+
+    for b in range(n_perms):
+        perm_labels = rng.permutation(is_ctrl)
+        bj_null[b] = _bj_scan(p_vals, perm_labels, max_p=0.5)
+
+    finite = np.isfinite(bj_null)
+    if not np.any(finite):
+        p_perm = np.nan
+        null_mean = np.nan
+        null_std = np.nan
+    else:
+        null_arr = bj_null[finite]
+        p_perm = (1.0 + np.sum(null_arr >= bj_obs)) / (1.0 + null_arr.size)
+        null_mean = float(np.mean(null_arr))
+        null_std = float(np.std(null_arr, ddof=0))
+
+    return {
+        "bj_obs": bj_obs,
+        "null_mean": null_mean,
+        "null_std": null_std,
+        "p_perm": p_perm,
+    }
+
 def main() -> None:
     print(f"Loading runs from {RUNS_TSV}")
     runs_df = load_runs(RUNS_TSV)
@@ -729,10 +1020,15 @@ def main() -> None:
     print("Precomputing per-pair empirical p, z, and -log10 p")
     P, Z, NL = precompute_pairwise_pznl(S, baselines)
 
+    print("Precomputing per-pair low-side p-values")
+    P_low = precompute_pairwise_low_p(S, baselines)
+
     print("Computing observed per-run leak scores (p_i, z_i, -log10 p_i)")
     obs_per_run = compute_per_run_observed(S, baselines, P, Z, NL)
     diag_scores = obs_per_run["diag_scores"]
     p_obs = obs_per_run["p_obs"]
+    p_obs_low = obs_per_run["p_obs_low"]
+    p_obs_two = obs_per_run["p_obs_two"]
     z_obs = obs_per_run["z_obs"]
     neglog10p_obs = obs_per_run["neglog10p_obs"]
     baseline_sizes = obs_per_run["baseline_sizes"]
@@ -749,6 +1045,8 @@ def main() -> None:
         n_perms=DERANGEMENT_PERMS,
         rng_seed=RNG_SEED_DERANGE,
         groups=groups,
+        conditions=conditions,
+        stat_specs=DEFAULT_STAT_SPECS,
     )
     
     print("Calibrating permutation null (all permutations, within condition)")
@@ -763,6 +1061,8 @@ def main() -> None:
         n_perms=ALL_PERMS,
         rng_seed=RNG_SEED_ALLPERM,
         groups=groups,
+        conditions=conditions,
+        stat_specs=DEFAULT_STAT_SPECS,
     )
 
     print(f"Writing per-run leak scores to {PER_RUN_LEAK_TSV}")
@@ -773,6 +1073,8 @@ def main() -> None:
         z_obs,
         neglog10p_obs,
         baseline_sizes,
+        p_obs_low,
+        p_obs_two,
         derange_summary["per_run_p_perm_high"],
         derange_summary["per_run_p_perm_low"],
         derange_summary["per_run_p_perm_two_sided"],
@@ -790,6 +1092,66 @@ def main() -> None:
         n_runs=n_runs,
         n_derange=DERANGEMENT_PERMS,
         n_allperm=ALL_PERMS,
+    )
+
+    print("Running directional sandbagging tests (log-ratio, signed tail, sign test)")
+    dir_tests = run_directional_sandbag_tests(
+        P=P,
+        P_low=P_low,
+        Z=Z,
+        p_up_diag=p_obs,
+        p_down_diag=p_obs_low,
+        z_diag=z_obs,
+        conditions=conditions,
+        groups=groups,
+        n_perms=LABEL_PERMS,
+        rng_seed=RNG_SEED_LABEL,
+    )
+
+    print()
+    print("Directional sandbagging tests")
+    print(
+        "  Log-ratio D (global): "
+        f"{dir_tests['D_global_obs']:.4f}, one-sided p_perm = {dir_tests['p_D_global_sandbag']:.5f}"
+    )
+    print(
+        "  Signed tail weight D_tail (global): "
+        f"{dir_tests['D_tail_obs']:.4f}, one-sided p_perm = {dir_tests['p_D_tail_global']:.5f}"
+    )
+    print(
+        "  ΔD (control - experimental): "
+        f"{dir_tests['delta_D_obs']:.4f}, p_perm = {dir_tests['p_delta_D']:.5f}"
+    )
+    delta_tail_obs = dir_tests["D_tail_ctrl_obs"] - dir_tests["D_tail_exp_obs"]
+    print(
+        "  ΔD_tail (control - experimental): "
+        f"{delta_tail_obs:.4f}, p_perm = {dir_tests['p_delta_D_tail']:.5f}"
+    )
+    print(
+        "  Sign test (more negative z than null): "
+        f"N_neg={dir_tests['N_neg_obs']}, N_pos={dir_tests['N_pos_obs']}, p_perm = {dir_tests['p_sign_more_negative']:.5f}"
+    )
+
+    print("\nRunning Berk–Jones enrichment test on baseline left-tail p-values")
+    bj_cond = run_bj_condition_enrichment(
+        p_left=p_obs_low,
+        conditions=conditions,
+        n_perms=LABEL_PERMS,
+        rng_seed=RNG_SEED_LABEL,
+    )
+
+    print("Berk–Jones condition-enrichment on left-tail baseline p_down")
+    print(
+        "  BJ statistic (control enriched among small p_down): "
+        f"{bj_cond['bj_obs']:.4f}"
+    )
+    print(
+        "  Null mean ± std: "
+        f"{bj_cond['null_mean']:.4f} ± {bj_cond['null_std']:.4f}"
+    )
+    print(
+        "  Permutation p-value: "
+        f"{bj_cond['p_perm']:.5f}"
     )
 
     print("Running left-tail tests within each condition (truncated-uniform null, using one-sided derangement p-values)")
@@ -819,35 +1181,6 @@ def main() -> None:
             "  two-sided p_perm for left-tail deviation from truncated-uniform null: "
             f"{res['p_two_sided']:.5f}"
         )
-
-    print("Running experimental vs control skew tests using within-condition derangement null")
-    cond_tests = run_condition_difference_tests(
-        Z=Z,
-        z_obs=z_obs,
-        conditions=conditions,
-        groups=groups,
-        n_perms=LABEL_PERMS,
-        rng_seed=RNG_SEED_LABEL,
-    )
-
-    print()
-    print("Condition comparison tests based on skew(z_perm_calibrated_derangements)")
-    print("-----------------------------------------------------------------------")
-    print(
-        f"Skew(z) in experimental runs: {cond_tests['skew_exp_obs']:.4f}, "
-        f"p_perm (two-sided by |skew|) = {cond_tests['skew_exp_p_two_sided']:.5f}"
-    )
-    print(
-        f"Skew(z) in control runs: {cond_tests['skew_ctrl_obs']:.4f}, "
-        f"p_perm (two-sided by |skew|) = {cond_tests['skew_ctrl_p_two_sided']:.5f}"
-    )
-    print(
-        "One-sided comparison test:"
-    )
-    print(
-        f"  Δskew (experimental - control) = {cond_tests['delta_skew_obs']:.4f}, "
-        f"p_perm = {cond_tests['delta_skew_p_one_sided']:.5f}"
-    )
 
 if __name__ == "__main__":
     main()
