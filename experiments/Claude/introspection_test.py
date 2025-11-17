@@ -667,6 +667,91 @@ def _bj_scan(p_values: np.ndarray, is_group_A: np.ndarray, max_p: float = 0.5) -
     return bj_max
 
 
+def _left_tail_prefix_scan(is_ctrl_prefix: np.ndarray, pi: float) -> float:
+    """Scan prefixes for enrichment of control labels over the baseline share."""
+
+    ctrl_cum = 0
+    best = 0.0
+
+    for idx in range(is_ctrl_prefix.size):
+        if is_ctrl_prefix[idx]:
+            ctrl_cum += 1
+
+        frac_ctrl = ctrl_cum / float(idx + 1)
+        if frac_ctrl <= pi:
+            continue
+
+        stat = (idx + 1) * _binary_kl(frac_ctrl, pi)
+        if stat > best:
+            best = stat
+
+    return best
+
+
+def run_left_tail_label_enrichment(
+    z_vals: np.ndarray,
+    conditions: np.ndarray,
+    n_perms: int,
+    rng_seed: int,
+) -> dict:
+    """Empirically test control-label enrichment among the worst (most negative) z's."""
+
+    z_arr = np.asarray(z_vals, dtype=float)
+    cond = np.asarray(conditions)
+
+    mask = np.isfinite(z_arr) & (
+        (cond == "control") | (cond == "experimental")
+    )
+    if not np.any(mask):
+        raise ValueError("No valid runs available for left-tail label enrichment")
+
+    z_filtered = z_arr[mask]
+    cond_filtered = cond[mask]
+    is_ctrl = cond_filtered == "control"
+
+    pi = float(np.mean(is_ctrl))
+    if pi <= 0.0 or pi >= 1.0:
+        raise ValueError("Left-tail enrichment requires both control and experimental runs")
+
+    order = np.argsort(z_filtered)
+    z_sorted = z_filtered[order]
+    is_ctrl_sorted = is_ctrl[order]
+
+    neg_count = int(np.sum(z_sorted < 0.0))
+    if neg_count == 0:
+        return {
+            "stat_obs": 0.0,
+            "null_mean": 0.0,
+            "null_std": 0.0,
+            "p_perm": 1.0,
+            "n_left_tail": 0,
+            "control_fraction": pi,
+        }
+
+    is_ctrl_left = is_ctrl_sorted[:neg_count]
+    stat_obs = _left_tail_prefix_scan(is_ctrl_left, pi)
+
+    rng = np.random.default_rng(rng_seed)
+    null_stats = np.empty(n_perms, dtype=float)
+
+    for b in range(n_perms):
+        permuted_ctrl = rng.permutation(is_ctrl_sorted)
+        null_stats[b] = _left_tail_prefix_scan(permuted_ctrl[:neg_count], pi)
+
+    null_mean = float(np.mean(null_stats))
+    null_std = float(np.std(null_stats, ddof=0))
+    p_perm = (1.0 + np.sum(null_stats >= stat_obs)) / (1.0 + n_perms)
+
+    return {
+        "stat_obs": stat_obs,
+        "null_mean": null_mean,
+        "null_std": null_std,
+        "p_perm": p_perm,
+        "n_left_tail": neg_count,
+        "control_fraction": pi,
+    }
+
+
 def run_left_tail_hotness_per_condition(
     z_vals: np.ndarray,
     p_one_sided: np.ndarray,
@@ -1109,6 +1194,32 @@ def main() -> None:
     print(
         "  Permutation p-value: "
         f"{bj_cond['p_perm']:.5f}"
+    )
+
+    print("\nRunning left-tail label-permutation enrichment test on calibrated z-scores")
+    left_tail_enrichment = run_left_tail_label_enrichment(
+        z_vals=derange_summary["per_run_z_perm_calibrated"],
+        conditions=conditions,
+        n_perms=LABEL_PERMS,
+        rng_seed=RNG_SEED_LABEL,
+    )
+
+    print("Left-tail control enrichment (scan over worst calibrated z)")
+    print(
+        "  scan statistic: "
+        f"{left_tail_enrichment['stat_obs']:.4f}"
+    )
+    print(
+        "  Null mean ± std: "
+        f"{left_tail_enrichment['null_mean']:.4f} ± {left_tail_enrichment['null_std']:.4f}"
+    )
+    print(
+        "  Permutation p-value: "
+        f"{left_tail_enrichment['p_perm']:.5f}"
+    )
+    print(
+        "  Runs with z < 0 considered in scan: "
+        f"{left_tail_enrichment['n_left_tail']} (control fraction overall = {left_tail_enrichment['control_fraction']:.4f})"
     )
 
     print(
