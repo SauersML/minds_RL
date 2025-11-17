@@ -5,7 +5,7 @@ import pandas as pd
 from scipy import stats
 
 
-def load_z_scores(tsv_path: str, column: str = "cross_run_z_score") -> np.ndarray:
+def load_z_scores(tsv_path: str, column: str = "score") -> np.ndarray:
     df = pd.read_csv(tsv_path, sep="\t")
     z = pd.to_numeric(df[column], errors="coerce")
     z = z.replace([np.inf, -np.inf], np.nan)
@@ -27,7 +27,7 @@ def analytic_extreme_p(z_vals: np.ndarray) -> dict:
     z = z[np.isfinite(z)]
     n = z.size
     if n == 0:
-        raise ValueError("No valid cross_run_z_score values found")
+        raise ValueError("No valid score values found")
 
     z_max = float(np.max(z))
     # Right-tail single-run probability under N(0,1)
@@ -53,7 +53,7 @@ def monte_carlo_extreme_p(
     z = z[np.isfinite(z)]
     n = z.size
     if n == 0:
-        raise ValueError("No valid cross_run_z_score values found")
+        raise ValueError("No valid score values found")
 
     z_max = float(np.max(z))
     rng = np.random.default_rng(rng_seed)
@@ -81,7 +81,7 @@ def extreme_value_test(z_vals: np.ndarray, n_sim: int = 1_000_000) -> None:
     analytic = analytic_extreme_p(z_vals)
     mc = monte_carlo_extreme_p(z_vals, n_sim=n_sim, p_global_analytic=analytic["p_global"])
 
-    print("Extreme-value test for max cross_run_z_score under N(0,1) null")
+    print("Extreme-value test for max score under N(0,1) null")
     print("-------------------------------------------------------------")
     print(f"Number of runs (n):                      {analytic['n']}")
     print(f"Maximum observed cross_run_z:            {analytic['z_max']:.6f}")
