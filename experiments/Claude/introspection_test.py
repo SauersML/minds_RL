@@ -20,6 +20,9 @@ ALL_PERMS = 1 # Disabled for speed
 RNG_SEED_DERANGE = 12345
 RNG_SEED_ALLPERM = 67890
 
+LABEL_PERMS = 100_000
+RNG_SEED_LABEL = 98765
+
 def load_runs(runs_path: str) -> pd.DataFrame:
     df = pd.read_csv(runs_path, sep="\t")
     df = df.sort_values("run_index").reset_index(drop=True)
@@ -475,6 +478,136 @@ def print_interpretation(
         )
         print()
 
+def _binary_kl(x: float, pi: float) -> float:
+    if x <= 0.0 or x >= 1.0 or pi <= 0.0 or pi >= 1.0:
+        return 0.0
+    return x * np.log(x / pi) + (1.0 - x) * np.log((1.0 - x) / (1.0 - pi))
+
+
+def _bj_scan(p_values: np.ndarray, is_group_A: np.ndarray, max_p: float = 0.5) -> float:
+    p_values = np.asarray(p_values, dtype=float)
+    is_group_A = np.asarray(is_group_A, dtype=bool)
+
+    mask = np.isfinite(p_values)
+    if not np.any(mask):
+        return 0.0
+
+    p_vals = p_values[mask]
+    gA = is_group_A[mask]
+
+    if p_vals.size == 0:
+        return 0.0
+
+    order = np.argsort(p_vals)
+    p_sorted = p_vals[order]
+    gA_sorted = gA[order]
+
+    pi = float(gA_sorted.mean())
+    if pi <= 0.0 or pi >= 1.0:
+        return 0.0
+
+    bj_max = 0.0
+    n_A_cum = 0
+    n_cum = 0
+
+    for k in range(p_sorted.size):
+        p_k = p_sorted[k]
+        if p_k > max_p:
+            break
+
+        n_cum += 1
+        if gA_sorted[k]:
+            n_A_cum += 1
+
+        x_t = n_A_cum / n_cum
+        if x_t <= pi:
+            continue
+
+        bj_val = n_cum * _binary_kl(x_t, pi)
+        if bj_val > bj_max:
+            bj_max = bj_val
+
+    return bj_max
+
+
+def run_condition_difference_tests(
+    z_perm_derange: np.ndarray,
+    conditions: np.ndarray,
+    n_label_perms: int,
+    rng_seed: int,
+) -> dict:
+    z_perm_derange = np.asarray(z_perm_derange, dtype=float)
+    cond = np.asarray(conditions)
+
+    unique = np.unique(cond)
+    if unique.size != 2:
+        raise ValueError(f"Expected exactly two conditions, got {unique}")
+
+    exp_mask = (cond == "experimental")
+    ctrl_mask = (cond == "control")
+
+    valid = np.isfinite(z_perm_derange) & (exp_mask | ctrl_mask)
+    z = z_perm_derange[valid]
+    cond_valid = cond[valid]
+
+    exp_mask_valid = (cond_valid == "experimental")
+    ctrl_mask_valid = (cond_valid == "control")
+
+    if not np.any(exp_mask_valid) or not np.any(ctrl_mask_valid):
+        raise ValueError("Need at least one experimental and one control run for tests")
+
+    # p_good: right tail (large z = good)
+    p_good = stats.norm.sf(z)
+    # p_bad: left tail (very negative z = bad)
+    p_bad = stats.norm.cdf(z)
+
+    # Test 1: experimental enriched for good guesses (small p_good)
+    bj_good_obs = _bj_scan(p_good, exp_mask_valid, max_p=0.5)
+
+    # Test 2: control enriched for bad guesses (small p_bad)
+    bj_bad_obs = _bj_scan(p_bad, ctrl_mask_valid, max_p=0.5)
+
+    # Mean z_perm difference (experimental - control), one-sided (experimental > control)
+    mean_exp = float(z[exp_mask_valid].mean())
+    mean_ctrl = float(z[ctrl_mask_valid].mean())
+    delta_mean_obs = mean_exp - mean_ctrl
+
+    rng = np.random.default_rng(rng_seed)
+    n = z.shape[0]
+    idx = np.arange(n, dtype=int)
+
+    n_exp = int(exp_mask_valid.sum())
+    bj_good_null = np.empty(n_label_perms, dtype=float)
+    bj_bad_null = np.empty(n_label_perms, dtype=float)
+    delta_mean_null = np.empty(n_label_perms, dtype=float)
+
+    for b in range(n_label_perms):
+        perm = rng.permutation(idx)
+
+        perm_exp_mask = np.zeros(n, dtype=bool)
+        perm_exp_mask[perm[:n_exp]] = True
+        perm_ctrl_mask = ~perm_exp_mask
+
+        bj_good_null[b] = _bj_scan(p_good, perm_exp_mask, max_p=0.5)
+        bj_bad_null[b] = _bj_scan(p_bad, perm_ctrl_mask, max_p=0.5)
+
+        mean_exp_perm = float(z[perm_exp_mask].mean())
+        mean_ctrl_perm = float(z[perm_ctrl_mask].mean())
+        delta_mean_null[b] = mean_exp_perm - mean_ctrl_perm
+
+    p_bj_good = (1.0 + np.sum(bj_good_null >= bj_good_obs)) / (1.0 + n_label_perms)
+    p_bj_bad = (1.0 + np.sum(bj_bad_null >= bj_bad_obs)) / (1.0 + n_label_perms)
+    p_delta_mean = (1.0 + np.sum(delta_mean_null >= delta_mean_obs)) / (1.0 + n_label_perms)
+
+    return {
+        "bj_good_exp_obs": bj_good_obs,
+        "bj_good_exp_p_perm": p_bj_good,
+        "bj_bad_ctrl_obs": bj_bad_obs,
+        "bj_bad_ctrl_p_perm": p_bj_bad,
+        "mean_diff_obs": delta_mean_obs,
+        "mean_diff_p_perm": p_delta_mean,
+    }
+
 def main() -> None:
     print(f"Loading runs from {RUNS_TSV}")
     runs_df = load_runs(RUNS_TSV)
@@ -557,6 +690,33 @@ def main() -> None:
         n_allperm=ALL_PERMS,
     )
 
+    print("Running experimental vs control label-permutation tests using z_perm_calibrated_derangements")
+    z_perm_derange = derange_summary["per_run_z_perm_calibrated"]
+    cond_tests = run_condition_difference_tests(
+        z_perm_derange,
+        conditions,
+        n_label_perms=LABEL_PERMS,
+        rng_seed=RNG_SEED_LABEL,
+    )
+
+    print()
+    print("Condition comparison tests (using derangement-calibrated per-run z-scores)")
+    print("--------------------------------------------------------------------------")
+    print(
+        f"Test 1 (experimental enriched for good guesses): "
+        f"BJ = {cond_tests['bj_good_exp_obs']:.4f}, "
+        f"p_perm = {cond_tests['bj_good_exp_p_perm']:.4g}"
+    )
+    print(
+        f"Test 2 (control enriched for bad guesses): "
+        f"BJ = {cond_tests['bj_bad_ctrl_obs']:.4f}, "
+        f"p_perm = {cond_tests['bj_bad_ctrl_p_perm']:.4g}"
+    )
+    print(
+        f"Mean difference z_perm (experimental - control): "
+        f"Δ = {cond_tests['mean_diff_obs']:.4f}, "
+        f"p_perm (one-sided, experimental > control) = {cond_tests['mean_diff_p_perm']:.4g}"
+    )
 
 if __name__ == "__main__":
     main()
