@@ -122,8 +122,100 @@ def test_positive_asymmetry(z_vals: np.ndarray) -> None:
     print(f"  sign-flip permutations      : {B}")
     print(f"  one-sided p (skew > 0)      : {p_one_sided:.3g}")
 
+
+def run_tail_enrichment_tests(z_vals: np.ndarray) -> None:
+    """
+    One-sided higher-criticism tests for right and left tails of a z-score sample,
+    with Monte Carlo calibration under i.i.d. N(0,1) null.
+    """
+    # Flatten, coerce to float, drop NaNs
+    z = np.asarray(z_vals, dtype=float).ravel()
+    z = z[~np.isnan(z)]
+    n = z.size
+    if n == 0:
+        print("No valid z-scores provided.")
+        return
+
+    eps = 1e-16
+
+    def one_sided_pvals(z_arr: np.ndarray, tail: str) -> np.ndarray:
+        if tail == "right":
+            p = np.array(
+                [
+                    0.5 * (1.0 - math.erf(zi / math.sqrt(2.0)))
+                    for zi in z_arr
+                ],
+                dtype=float,
+            )
+        elif tail == "left":
+            p = np.array(
+                [
+                    0.5 * (1.0 + math.erf(zi / math.sqrt(2.0)))
+                    for zi in z_arr
+                ],
+                dtype=float,
+            )
+        else:
+            raise ValueError("tail must be 'right' or 'left'")
+        p = np.clip(p, eps, 1.0 - eps)
+        p.sort()
+        return p
+
+    def compute_hc(p_sorted: np.ndarray) -> float:
+        n_local = p_sorted.size
+        if n_local == 0:
+            return 0.0
+        idx = np.arange(1, n_local + 1, dtype=float)
+        lower = 1.0 / n_local
+        upper = 0.5
+        mask = (p_sorted >= lower) & (p_sorted <= upper)
+        ps = p_sorted[mask]
+        ks = idx[mask]
+        if ps.size == 0:
+            return 0.0
+        x = ks / n_local
+        numer = x - ps
+        denom = np.sqrt(ps * (1.0 - ps))
+        hc_vals = np.sqrt(n_local) * numer / denom
+        return float(np.max(hc_vals))
+
+    # Observed statistics
+    p_right = one_sided_pvals(z, "right")
+    p_left = one_sided_pvals(z, "left")
+
+    hc_right_obs = compute_hc(p_right)
+    hc_left_obs = compute_hc(p_left)
+
+    # Monte Carlo null calibration
+    rng = np.random.default_rng(12345)
+    nsim = 4000
+    hc_right_null = np.empty(nsim, dtype=float)
+    hc_left_null = np.empty(nsim, dtype=float)
+
+    for i in range(nsim):
+        z_sim = rng.standard_normal(n)
+
+        p_r_sim = one_sided_pvals(z_sim, "right")
+        p_l_sim = one_sided_pvals(z_sim, "left")
+
+        hc_right_null[i] = compute_hc(p_r_sim)
+        hc_left_null[i] = compute_hc(p_l_sim)
+
+    hc_right_p = (1.0 + np.sum(hc_right_null >= hc_right_obs)) / (nsim + 1.0)
+    hc_left_p = (1.0 + np.sum(hc_left_null >= hc_left_obs)) / (nsim + 1.0)
+
+    print(f"Sample size (z-scores): {n}")
+    print("Right-tail higher-criticism (enrichment of large positive z):")
+    print(f"  HC statistic = {hc_right_obs:.4f}")
+    print(f"  Monte Carlo p-value = {hc_right_p:.4g}")
+    print("Left-tail higher-criticism (enrichment of large negative z):")
+    print(f"  HC statistic = {hc_left_obs:.4f}")
+    print(f"  Monte Carlo p-value = {hc_left_p:.4g}")
+
 def main() -> None:
     z_vals = load_z_scores(TSV_PATH)
+    
+    run_tail_enrichment_tests(z_vals)
 
     test_positive_asymmetry(z_vals)
 
