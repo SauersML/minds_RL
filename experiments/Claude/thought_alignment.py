@@ -275,18 +275,14 @@ def evaluate_pair(query: str, subject: str) -> Dict[str, Any]:
 
 
 def score_pair_no_permutation(query: str, subject: str) -> float:
-    pq = symbol_probs(query, subject)
-    ps = symbol_probs(subject, query)
     _, _, stats = smith_waterman_affine(query, subject)
-    L = stats["L"]
     raw_score = (
         stats["matches"] * MATCH_SCORE
         - stats["mismatches"] * MISMATCH_PENALTY
         - stats["gap_opens"] * GAP_OPEN
         - stats["gap_extends"] * GAP_EXTEND
     )
-    return adjusted_score(raw_score, L, pq, ps)
-
+    return float(raw_score)
 
 # --------------------------------------------------------------------
 # TSV loading and conditioning
@@ -432,8 +428,8 @@ def plot_alt_vs_null_for_condition(
         label=f"{condition} within-row",
     )
 
-    ax.set_title(f"{condition} adjusted alignment scores")
-    ax.set_xlabel("Composition-adjusted Smith–Waterman score")
+    ax.set_title(f"{condition} alignment scores (raw)")
+    ax.set_xlabel("Smith–Waterman raw score")
     ax.set_ylabel("Density")
     ax.legend()
     fig.tight_layout()
@@ -673,7 +669,8 @@ def main() -> None:
 
             p_value = float(res["p_value"])
             adj = float(res["adjusted_score"])
-            cond_adj_scores.append(adj)
+            raw = float(res["raw_score"])
+            cond_adj_scores.append(raw)
             neglogp = -math.log10(p_value) if p_value > 0.0 else float("inf")
             cond_neglogp.append(neglogp)
 
@@ -686,7 +683,7 @@ def main() -> None:
                 "phase2_thinking": entry["phase2_thinking"],
                 "p_value": p_value,
                 "adjusted_score": adj,
-                "raw_score": int(res["raw_score"]),
+                "raw_score": int(raw),
                 "query_start": int(res["query_start"]),
                 "query_end": int(res["query_end"]),
                 "subject_start": int(res["subject_start"]),
@@ -700,6 +697,7 @@ def main() -> None:
                 "alphabet_size": int(res["alphabet_size"]),
                 "null_samples": int(res["null_samples"]),
             }
+
             cond_results.append(row_record)
             tsv_rows.append(row_record)
 
@@ -722,8 +720,8 @@ def main() -> None:
                         continue
                     secret_i = entries[i]["secret"]
                     guess_j = entries[j]["guess"]
-                    adj = score_pair_no_permutation(secret_i, guess_j)
-                    scores.append(adj)
+                    raw_null = score_pair_no_permutation(secret_i, guess_j)
+                    scores.append(raw_null)
 
         cross_null_scores_by_condition[cond] = scores
         if scores:
@@ -739,17 +737,17 @@ def main() -> None:
         cond_results = within_results_by_condition.get(cond, [])
         z_vals: List[float] = []
         for row in cond_results:
-            adj = float(row["adjusted_score"])
+            raw = float(row["raw_score"])
             if sigma > 0.0:
-                z = (adj - mu) / sigma
+                z = (raw - mu) / sigma
             else:
                 z = 0.0
             row["cross_run_z_score"] = z
 
             if scores:
                 n_scores = len(scores)
-                count_ge = sum(1 for s in scores if s >= adj)
-                count_le = sum(1 for s in scores if s <= adj)
+                count_ge = sum(1 for s in scores if s >= raw)
+                count_le = sum(1 for s in scores if s <= raw)
 
                 p_upper = (count_ge + 1.0) / (n_scores + 1.0)
                 p_lower = (count_le + 1.0) / (n_scores + 1.0)
