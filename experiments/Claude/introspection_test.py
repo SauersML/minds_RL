@@ -5,7 +5,7 @@ import pandas as pd
 from scipy import stats
 
 
-def load_z_scores(tsv_path: str, column: str = "score") -> np.ndarray:
+def load_z_scores(tsv_path: str, column: str = "cross_run_emp_z_score") -> np.ndarray:
     df = pd.read_csv(tsv_path, sep="\t")
     z = pd.to_numeric(df[column], errors="coerce")
     z = z.replace([np.inf, -np.inf], np.nan)
