@@ -368,19 +368,18 @@ def run_single_trial(trial_index, condition, context_text, context_target_round)
         flush=True,
     )
 
-    cached_prefix_block = {
+    user_block = {
         "type": "text",
         "text": phase1_prompt,
-        "cache_control": {"type": "ephemeral"},
     }
 
     conversation = [
         {
             "role": "user",
-            "content": [cached_prefix_block],
+            "content": [user_block],
         }
     ]
-    print("[run_single_trial] Conversation initialized with cached user prompt", flush=True)
+    print("[run_single_trial] Conversation initialized with user prompt", flush=True)
 
     print("[run_single_trial] Sending phase 1 request to Anthropic", flush=True)
     response1 = client.messages.create(
