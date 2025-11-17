@@ -181,12 +181,14 @@ def _permutation_chunk_worker(args) -> dict:
         scheme,
         n_perms_chunk,
         rng_seed,
+        z_obs,
     ) = args
 
     n = P.shape[0]
     rng = np.random.default_rng(rng_seed)
-    stat_names = ["mean_neglog10p", "max_z", "skew_z",]
+    stat_names = ["mean_neglog10p", "max_z", "skew_z", "hc_right"]
     chunk_values = {name: np.empty(n_perms_chunk, dtype=float) for name in stat_names}
+    counts_ge = np.zeros(n, dtype=np.int64)
 
     for b in range(n_perms_chunk):
         if scheme == "derangements":
@@ -206,8 +208,12 @@ def _permutation_chunk_worker(args) -> dict:
         for name in stat_names:
             chunk_values[name][b] = stats_perm[name]
 
-    return chunk_values
+        z_perm = per_run_perm["z_perm"]
+        mask = np.isfinite(z_obs) & np.isfinite(z_perm)
+        counts_ge[mask] += (z_perm[mask] >= z_obs[mask])
 
+    chunk_values["counts_ge_z"] = counts_ge
+    return chunk_values
 
 def calibrate_permutations(
     P: np.ndarray,
@@ -221,7 +227,7 @@ def calibrate_permutations(
     rng_seed: int,
 ) -> dict:
     obs_stats = compute_global_stats(p_obs, z_obs, neglog10p_obs)
-    stat_names = ["mean_neglog10p", "max_z", "skew_z",]
+    stat_names = ["mean_neglog10p", "max_z", "skew_z", "hc_right"]
 
     n_workers = os.cpu_count() or 1
     if n_workers < 1:
@@ -251,6 +257,7 @@ def calibrate_permutations(
                 scheme,
                 size,
                 chunk_seed,
+                z_obs,
             )
         )
 
@@ -264,6 +271,11 @@ def calibrate_permutations(
     for name in stat_names:
         parts = [cr[name] for cr in chunk_results]
         null_values[name] = np.concatenate(parts, axis=0)
+
+    n = P.shape[0]
+    total_counts_ge = np.zeros(n, dtype=np.int64)
+    for cr in chunk_results:
+        total_counts_ge += cr["counts_ge_z"]
 
     summary = {}
     for name in stat_names:
@@ -284,8 +296,19 @@ def calibrate_permutations(
         }
 
     summary["n_effective"] = obs_stats["n_effective"]
-    return summary
 
+    z_obs_arr = np.asarray(z_obs, dtype=float)
+    per_run_p_perm = np.full(n, np.nan, dtype=float)
+    per_run_z_perm = np.full(n, np.nan, dtype=float)
+
+    valid = np.isfinite(z_obs_arr)
+    per_run_p_perm[valid] = (total_counts_ge[valid] + 1.0) / (n_perms + 1.0)
+    per_run_z_perm[valid] = stats.norm.isf(per_run_p_perm[valid])
+
+    summary["per_run_p_perm"] = per_run_p_perm
+    summary["per_run_z_perm_calibrated"] = per_run_z_perm
+
+    return summary
 
 def write_per_run_leak_scores(
     runs_df: pd.DataFrame,
@@ -294,6 +317,10 @@ def write_per_run_leak_scores(
     z_obs: np.ndarray,
     neglog10p_obs: np.ndarray,
     baseline_sizes: np.ndarray,
+    derange_p_perm: np.ndarray,
+    derange_z_perm: np.ndarray,
+    allperm_p_perm: np.ndarray,
+    allperm_z_perm: np.ndarray,
 ) -> None:
     os.makedirs(os.path.dirname(PER_RUN_LEAK_TSV), exist_ok=True)
     with open(PER_RUN_LEAK_TSV, "w", encoding="utf-8", newline="") as f:
@@ -306,6 +333,10 @@ def write_per_run_leak_scores(
             "empirical_p",
             "z_from_p",
             "neglog10_p",
+            "perm_p_derangements",
+            "z_perm_calibrated_derangements",
+            "perm_p_all_permutations",
+            "z_perm_calibrated_all_permutations",
         ]
         writer.writerow(header)
 
@@ -322,9 +353,12 @@ def write_per_run_leak_scores(
                     float(p_obs[idx]),
                     float(z_obs[idx]),
                     float(neglog10p_obs[idx]),
+                    float(derange_p_perm[idx]),
+                    float(derange_z_perm[idx]),
+                    float(allperm_p_perm[idx]),
+                    float(allperm_z_perm[idx]),
                 ]
             )
-
 
 def write_perm_summary(
     derange_summary: dict,
@@ -433,16 +467,6 @@ def main() -> None:
     neglog10p_obs = obs_per_run["neglog10p_obs"]
     baseline_sizes = obs_per_run["baseline_sizes"]
 
-    print(f"Writing per-run leak scores to {PER_RUN_LEAK_TSV}")
-    write_per_run_leak_scores(
-        runs_df,
-        diag_scores,
-        p_obs,
-        z_obs,
-        neglog10p_obs,
-        baseline_sizes,
-    )
-
     print("Calibrating permutation null (derangements only)")
     derange_summary = calibrate_permutations(
         P=P,
@@ -467,6 +491,20 @@ def main() -> None:
         scheme="all_permutations",
         n_perms=ALL_PERMS,
         rng_seed=RNG_SEED_ALLPERM,
+    )
+
+    print(f"Writing per-run leak scores to {PER_RUN_LEAK_TSV}")
+    write_per_run_leak_scores(
+        runs_df,
+        diag_scores,
+        p_obs,
+        z_obs,
+        neglog10p_obs,
+        baseline_sizes,
+        derange_summary["per_run_p_perm"],
+        derange_summary["per_run_z_perm_calibrated"],
+        allperm_summary["per_run_p_perm"],
+        allperm_summary["per_run_z_perm_calibrated"],
     )
 
     print(f"Writing permutation summary to {PERM_SUMMARY_TSV}")
