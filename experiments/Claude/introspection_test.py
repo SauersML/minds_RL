@@ -623,15 +623,36 @@ def run_condition_difference_tests(
         "delta_skew_p_one_sided": p_delta_one_sided,
     }
 
-def run_left_tail_hotness_per_condition(z_vals: np.ndarray, conditions: np.ndarray) -> dict:
+def run_left_tail_hotness_per_condition(
+    z_vals: np.ndarray,
+    p_two_sided: np.ndarray,
+    conditions: np.ndarray,
+    n_resamples: int,
+    rng_seed: int,
+) -> dict:
     z_vals = np.asarray(z_vals, dtype=float)
+    p_two_sided = np.asarray(p_two_sided, dtype=float)
     cond = np.asarray(conditions)
     results = {}
 
+    rng = np.random.default_rng(rng_seed)
+
     for label in np.unique(cond):
-        mask = np.isfinite(z_vals) & (cond == label) & (z_vals < 0.0)
-        z_neg = z_vals[mask]
-        m = z_neg.size
+        # runs in this condition with finite z and p
+        mask_cond = np.isfinite(z_vals) & np.isfinite(p_two_sided) & (cond == label)
+        idx_cond = np.where(mask_cond)[0]
+        if idx_cond.size == 0:
+            results[label] = {
+                "m_neg": 0,
+                "T_obs": np.nan,
+                "p_hot": np.nan,
+            }
+            continue
+
+        # "bad side" = negative perm z
+        mask_left = mask_cond & (z_vals < 0.0)
+        idx_left = np.where(mask_left)[0]
+        m = idx_left.size
         if m == 0:
             results[label] = {
                 "m_neg": 0,
@@ -640,15 +661,20 @@ def run_left_tail_hotness_per_condition(z_vals: np.ndarray, conditions: np.ndarr
             }
             continue
 
-        p_left = stats.norm.cdf(z_neg)
-        w = -np.log10(p_left)
-        T_obs = float(np.mean(w))
+        # significance weight from two-sided perm p
+        w = -np.log10(p_two_sided)
 
-        B = 100000
-        rng = np.random.default_rng(24680)
-        U = rng.uniform(0.0, 0.5, size=(B, m))
-        T_null = -np.log10(U).mean(axis=1)
-        p_hot = (1.0 + np.sum(T_null >= T_obs)) / (B + 1.0)
+        # observed left-tail hotness: mean weight over negative-z runs
+        T_obs = float(np.mean(w[idx_left]))
+
+        # empirical null: random subsets of same size m from this condition
+        T_null = np.empty(n_resamples, dtype=float)
+        for b in range(n_resamples):
+            sample_idx = rng.choice(idx_cond, size=m, replace=False)
+            T_null[b] = float(np.mean(w[sample_idx]))
+
+        # one-sided p: how often a random subset is at least this "hot"
+        p_hot = (1.0 + np.sum(T_null >= T_obs)) / (1.0 + n_resamples)
 
         results[label] = {
             "m_neg": int(m),
@@ -741,19 +767,22 @@ def main() -> None:
         n_allperm=ALL_PERMS,
     )
 
-    print("Running left-tail hotness tests within each condition using z_perm_calibrated_derangements")
+    print("Running left-tail hotness tests within each condition (empirical, using two-sided derangement p-values)")
     left_tail_tests = run_left_tail_hotness_per_condition(
         derange_summary["per_run_z_perm_calibrated"],
+        derange_summary["per_run_p_perm_two_sided"],
         conditions,
+        LABEL_PERMS,
+        RNG_SEED_LABEL,
     )
 
     for label, res in left_tail_tests.items():
         print()
         print(f"Left tail hotness in {label} runs")
         print(f"  number of runs with z < 0: {res['m_neg']}")
-        print(f"  mean -log10(p_left): {res['T_obs']:.4f}")
+        print(f"  mean -log10(two-sided perm p) in left tail: {res['T_obs']:.4f}")
         print(
-            "  one-sided p_perm (left tail hotter than Uniform(0,0.5) null): "
+            "  one-sided p_perm (left tail hotter than empirical within-condition null): "
             f"{res['p_hot']:.5f}"
         )
 
