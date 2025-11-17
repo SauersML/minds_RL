@@ -2,6 +2,7 @@ import os
 import json
 import re
 import time
+import random
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
@@ -24,9 +25,14 @@ GENERAL_PROMPT1_PATH = "general_prompt1.txt"
 GENERAL_PROMPT2_PATH = "general_prompt2.txt"
 
 # Where to inject the context for experimental runs:
-# "phase1" -> above the first user message (current behavior)
-# "phase2" -> above the second user message instead
+# "control" -> do not inject context
+# "phase1" -> prepend context to the first user message
+# "phase2" -> prepend context to the second user message
+# "mixed"   -> randomly choose among control/phase1/phase2 per trial
+# The flag only ever selects a single target per trial (never both phases).
 CONTEXT_TARGET_ROUND = "phase1"
+
+MIXED_CONTEXT_ROUNDS = ("control", "phase1", "phase2")
 
 UPPERCASE_50_PATTERN = re.compile(r"[A-Z]{50}")
 
@@ -44,7 +50,7 @@ def load_context_text():
     return context
 
 
-def build_phase1_prompt(condition, context_text):
+def build_phase1_prompt(condition, context_text, context_target_round):
     print(
         f"[build_phase1_prompt] Building phase 1 prompt for condition={condition}",
         flush=True,
@@ -56,9 +62,9 @@ def build_phase1_prompt(condition, context_text):
         flush=True,
     )
 
-    if condition == "experimental" and CONTEXT_TARGET_ROUND == "phase1":
+    if context_target_round == "phase1":
         print(
-            "[build_phase1_prompt] Using experimental condition, appending context in phase 1",
+            "[build_phase1_prompt] Appending context in phase 1",
             flush=True,
         )
         context_prompt = context_text
@@ -76,7 +82,7 @@ def build_phase1_prompt(condition, context_text):
     return general_prompt1
 
 
-def build_phase2_prompt(condition, context_text):
+def build_phase2_prompt(condition, context_text, context_target_round):
     print(
         f"[build_phase2_prompt] Building phase 2 prompt for condition={condition}",
         flush=True,
@@ -88,9 +94,9 @@ def build_phase2_prompt(condition, context_text):
         flush=True,
     )
 
-    if condition == "experimental" and CONTEXT_TARGET_ROUND == "phase2":
+    if context_target_round == "phase2":
         print(
-            "[build_phase2_prompt] Using experimental condition, appending context in phase 2",
+            "[build_phase2_prompt] Appending context in phase 2",
             flush=True,
         )
         context_prompt = context_text
@@ -339,7 +345,7 @@ def append_trial_jsonl(trial_record):
     print("[append_trial_jsonl] JSONL log updated", flush=True)
 
 
-def run_single_trial(trial_index, condition, context_text):
+def run_single_trial(trial_index, condition, context_text, context_target_round):
     print(
         f"[run_single_trial] Starting trial index={trial_index} condition={condition}",
         flush=True,
@@ -347,7 +353,14 @@ def run_single_trial(trial_index, condition, context_text):
     timestamp_iso = datetime.utcnow().isoformat() + "Z"
     print(f"[run_single_trial] Timestamp: {timestamp_iso}", flush=True)
 
-    phase1_prompt = build_phase1_prompt(condition, context_text)
+    print(
+        f"[run_single_trial] context_target_round resolved to {context_target_round}",
+        flush=True,
+    )
+
+    phase1_prompt = build_phase1_prompt(
+        condition, context_text, context_target_round
+    )
     print(
         f"[run_single_trial] Phase 1 prompt length: {len(phase1_prompt)} characters",
         flush=True,
@@ -411,7 +424,9 @@ def run_single_trial(trial_index, condition, context_text):
     )
     print("[run_single_trial] Appended phase 1 response to conversation", flush=True)
 
-    phase2_prompt = build_phase2_prompt(condition, context_text)
+    phase2_prompt = build_phase2_prompt(
+        condition, context_text, context_target_round
+    )
     print(
         f"[run_single_trial] Phase 2 prompt length: {len(phase2_prompt)} characters",
         flush=True,
@@ -485,10 +500,39 @@ def run_single_trial(trial_index, condition, context_text):
         "response2_id": response2.id,
         "response1_model": response1.model,
         "response2_model": response2.model,
+        "context_target_round": context_target_round,
     }
     print("[run_single_trial] Trial record assembled", flush=True)
 
     return trial_record
+
+
+def resolve_context_target_round(condition):
+    if condition == "control":
+        print(
+            "[resolve_context_target_round] Control condition; forcing context_target_round='control'",
+            flush=True,
+        )
+        return "control"
+
+    if CONTEXT_TARGET_ROUND == "mixed":
+        choice = random.choice(MIXED_CONTEXT_ROUNDS)
+        print(
+            f"[resolve_context_target_round] Mixed mode selected {choice} for experimental trial",
+            flush=True,
+        )
+        return choice
+
+    if CONTEXT_TARGET_ROUND not in MIXED_CONTEXT_ROUNDS:
+        raise ValueError(
+            f"Invalid CONTEXT_TARGET_ROUND='{CONTEXT_TARGET_ROUND}'. Expected one of {MIXED_CONTEXT_ROUNDS + ('mixed',)}"
+        )
+
+    print(
+        f"[resolve_context_target_round] Using global CONTEXT_TARGET_ROUND={CONTEXT_TARGET_ROUND}",
+        flush=True,
+    )
+    return CONTEXT_TARGET_ROUND
 
 
 def main():
@@ -513,7 +557,8 @@ def main():
                 f"[main] Scheduling trial {trial_index} condition={condition}",
                 flush=True,
             )
-            trial_configs.append((trial_index, condition))
+            target_round = resolve_context_target_round(condition)
+            trial_configs.append((trial_index, condition, target_round))
             trial_index += 1
 
     print(
@@ -524,9 +569,15 @@ def main():
     trial_records = []
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_TRIALS) as executor:
         futures = []
-        for t_index, cond in trial_configs:
+        for t_index, cond, context_target_round in trial_configs:
             futures.append(
-                executor.submit(run_single_trial, t_index, cond, context_text)
+                executor.submit(
+                    run_single_trial,
+                    t_index,
+                    cond,
+                    context_text,
+                    context_target_round,
+                )
             )
         for future in futures:
             record = future.result()
