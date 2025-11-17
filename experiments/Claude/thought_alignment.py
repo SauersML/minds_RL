@@ -546,7 +546,7 @@ def plot_combined_null_and_neglogp(
                 label=f"{cond} cross-row null",
             )
         axes[0].set_title("Cross-row null adjusted scores")
-        axes[0].set_xlabel("Composition-adjusted Smith–Waterman score")
+        axes[0].set_xlabel("Smith–Waterman score")
         axes[0].set_ylabel("Density")
         axes[0].legend()
 
