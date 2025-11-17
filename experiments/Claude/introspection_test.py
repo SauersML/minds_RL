@@ -728,7 +728,7 @@ def main() -> None:
         f"p_perm (two-sided by |skew|) = {cond_tests['skew_ctrl_p_two_sided']:.5f}"
     )
     print(
-        "One-sided test that experimental skews more positive and control more negative:"
+        "One-sided comparison test:"
     )
     print(
         f"  Δskew (experimental - control) = {cond_tests['delta_skew_obs']:.4f}, "
