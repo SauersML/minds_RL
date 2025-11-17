@@ -557,30 +557,21 @@ def run_condition_difference_tests(
     if not np.any(exp_mask_valid) or not np.any(ctrl_mask_valid):
         raise ValueError("Need at least one experimental and one control run for tests")
 
-    # p_good: right tail (large z = good)
-    p_good = stats.norm.sf(z)
-    # p_bad: left tail (very negative z = bad)
-    p_bad = stats.norm.cdf(z)
+    z_exp = z[exp_mask_valid]
+    z_ctrl = z[ctrl_mask_valid]
 
-    # Test 1: experimental enriched for good guesses (small p_good)
-    bj_good_obs = _bj_scan(p_good, exp_mask_valid, max_p=0.5)
-
-    # Test 2: control enriched for bad guesses (small p_bad)
-    bj_bad_obs = _bj_scan(p_bad, ctrl_mask_valid, max_p=0.5)
-
-    # Mean z_perm difference (experimental - control), one-sided (experimental > control)
-    mean_exp = float(z[exp_mask_valid].mean())
-    mean_ctrl = float(z[ctrl_mask_valid].mean())
-    delta_mean_obs = mean_exp - mean_ctrl
+    skew_exp_obs = float(stats.skew(z_exp, bias=False))
+    skew_ctrl_obs = float(stats.skew(z_ctrl, bias=False))
+    delta_skew_obs = skew_exp_obs - skew_ctrl_obs
 
     rng = np.random.default_rng(rng_seed)
     n = z.shape[0]
     idx = np.arange(n, dtype=int)
-
     n_exp = int(exp_mask_valid.sum())
-    bj_good_null = np.empty(n_label_perms, dtype=float)
-    bj_bad_null = np.empty(n_label_perms, dtype=float)
-    delta_mean_null = np.empty(n_label_perms, dtype=float)
+
+    skew_exp_null = np.empty(n_label_perms, dtype=float)
+    skew_ctrl_null = np.empty(n_label_perms, dtype=float)
+    delta_skew_null = np.empty(n_label_perms, dtype=float)
 
     for b in range(n_label_perms):
         perm = rng.permutation(idx)
@@ -589,25 +580,26 @@ def run_condition_difference_tests(
         perm_exp_mask[perm[:n_exp]] = True
         perm_ctrl_mask = ~perm_exp_mask
 
-        bj_good_null[b] = _bj_scan(p_good, perm_exp_mask, max_p=0.5)
-        bj_bad_null[b] = _bj_scan(p_bad, perm_ctrl_mask, max_p=0.5)
+        z_exp_perm = z[perm_exp_mask]
+        z_ctrl_perm = z[perm_ctrl_mask]
 
-        mean_exp_perm = float(z[perm_exp_mask].mean())
-        mean_ctrl_perm = float(z[perm_ctrl_mask].mean())
-        delta_mean_null[b] = mean_exp_perm - mean_ctrl_perm
+        skew_exp_null[b] = float(stats.skew(z_exp_perm, bias=False))
+        skew_ctrl_null[b] = float(stats.skew(z_ctrl_perm, bias=False))
+        delta_skew_null[b] = skew_exp_null[b] - skew_ctrl_null[b]
 
-    p_bj_good = (1.0 + np.sum(bj_good_null >= bj_good_obs)) / (1.0 + n_label_perms)
-    p_bj_bad = (1.0 + np.sum(bj_bad_null >= bj_bad_obs)) / (1.0 + n_label_perms)
-    p_delta_mean = (1.0 + np.sum(delta_mean_null >= delta_mean_obs)) / (1.0 + n_label_perms)
+    p_exp_two_sided = (1.0 + np.sum(np.abs(skew_exp_null) >= abs(skew_exp_obs))) / (1.0 + n_label_perms)
+    p_ctrl_two_sided = (1.0 + np.sum(np.abs(skew_ctrl_null) >= abs(skew_ctrl_obs))) / (1.0 + n_label_perms)
+    p_delta_one_sided = (1.0 + np.sum(delta_skew_null >= delta_skew_obs)) / (1.0 + n_label_perms)
 
     return {
-        "bj_good_exp_obs": bj_good_obs,
-        "bj_good_exp_p_perm": p_bj_good,
-        "bj_bad_ctrl_obs": bj_bad_obs,
-        "bj_bad_ctrl_p_perm": p_bj_bad,
-        "mean_diff_obs": delta_mean_obs,
-        "mean_diff_p_perm": p_delta_mean,
+        "skew_exp_obs": skew_exp_obs,
+        "skew_exp_p_two_sided": p_exp_two_sided,
+        "skew_ctrl_obs": skew_ctrl_obs,
+        "skew_ctrl_p_two_sided": p_ctrl_two_sided,
+        "delta_skew_obs": delta_skew_obs,
+        "delta_skew_p_one_sided": p_delta_one_sided,
     }
+
 
 def main() -> None:
     print(f"Loading runs from {RUNS_TSV}")
@@ -701,22 +693,22 @@ def main() -> None:
     )
 
     print()
-    print("Condition comparison tests (using derangement-calibrated per-run z-scores)")
-    print("--------------------------------------------------------------------------")
+    print("Condition comparison tests based on skew(z_perm_calibrated_derangements)")
+    print("-----------------------------------------------------------------------")
     print(
-        f"Test 1 (experimental enriched for good guesses): "
-        f"BJ = {cond_tests['bj_good_exp_obs']:.4f}, "
-        f"p_perm = {cond_tests['bj_good_exp_p_perm']:.4g}"
+        f"Skew(z) in experimental runs: {cond_tests['skew_exp_obs']:.4f}, "
+        f"p_perm (two-sided by |skew|) = {cond_tests['skew_exp_p_two_sided']:.5f}"
     )
     print(
-        f"Test 2 (control enriched for bad guesses): "
-        f"BJ = {cond_tests['bj_bad_ctrl_obs']:.4f}, "
-        f"p_perm = {cond_tests['bj_bad_ctrl_p_perm']:.4g}"
+        f"Skew(z) in control runs: {cond_tests['skew_ctrl_obs']:.4f}, "
+        f"p_perm (two-sided by |skew|) = {cond_tests['skew_ctrl_p_two_sided']:.5f}"
     )
     print(
-        f"Mean difference z_perm (experimental - control): "
-        f"Δ = {cond_tests['mean_diff_obs']:.4f}, "
-        f"p_perm (one-sided, experimental > control) = {cond_tests['mean_diff_p_perm']:.4g}"
+        "One-sided test that experimental skews more positive and control more negative:"
+    )
+    print(
+        f"  Δskew (experimental - control) = {cond_tests['delta_skew_obs']:.4f}, "
+        f"p_perm = {cond_tests['delta_skew_p_one_sided']:.5f}"
     )
 
 if __name__ == "__main__":
