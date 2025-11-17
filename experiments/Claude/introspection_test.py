@@ -1,242 +1,484 @@
+import csv
 import os
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 
+# Input files from Phase 1
+RUNS_TSV = os.path.join("sonnet_cot_experiment", "runs.tsv")
+SCORE_MATRIX_TSV = os.path.join("sonnet_cot_experiment", "score_matrix.tsv")
 
-def load_z_scores(tsv_path: str, column: str = "cross_run_emp_z_score") -> np.ndarray:
-    df = pd.read_csv(tsv_path, sep="\t")
-    z = pd.to_numeric(df[column], errors="coerce")
-    z = z.replace([np.inf, -np.inf], np.nan)
-    z = z.dropna()
-    return z.to_numpy()
+# Output files from this script
+PER_RUN_LEAK_TSV = os.path.join("sonnet_cot_experiment", "per_run_leak_scores.tsv")
+PERM_SUMMARY_TSV = os.path.join("sonnet_cot_experiment", "permutation_summary.tsv")
 
+# Permutation settings
+DERANGEMENT_PERMS = 10000
+ALL_PERMS = 10000
+RNG_SEED_DERANGE = 12345
+RNG_SEED_ALLPERM = 67890
 
-def one_in_string(p: float) -> str:
-    if p <= 0.0:
-        return "less than 1 in (simulation resolution)"
-    inv = 1.0 / p
-    if inv >= 1e9:
-        return f"about 1 in {inv:.2e}"
-    return f"about 1 in {inv:,.1f}"
-
-
-def analytic_extreme_p(z_vals: np.ndarray) -> dict:
-    z = np.asarray(z_vals, dtype=float)
-    z = z[np.isfinite(z)]
-    n = z.size
-    if n == 0:
-        raise ValueError("No valid score values found")
-
-    z_max = float(np.max(z))
-    # Right-tail single-run probability under N(0,1)
-    p_single = float(stats.norm.sf(z_max))
-    # Global probability that max of n i.i.d. N(0,1) exceeds z_max
-    p_global = 1.0 - (1.0 - p_single) ** n
-
-    return {
-        "n": n,
-        "z_max": z_max,
-        "p_single": p_single,
-        "p_global": p_global,
-    }
+def load_runs(runs_path: str) -> pd.DataFrame:
+    df = pd.read_csv(runs_path, sep="\t")
+    df = df.sort_values("run_index").reset_index(drop=True)
+    return df
 
 
-def monte_carlo_extreme_p(
-    z_vals: np.ndarray,
-    n_sim: int,
-    p_global_analytic: float,
-    rng_seed: int = 12345,
+def load_score_matrix(score_path: str, n_runs: int) -> np.ndarray:
+    df = pd.read_csv(score_path, sep="\t")
+    S = np.full((n_runs, n_runs), np.nan, dtype=float)
+
+    for row in df.itertuples(index=False):
+        i = int(row.secret_run_index)
+        j = int(row.guess_run_index)
+        S[i, j] = float(row.score)
+
+    return S
+
+
+def build_baselines(S: np.ndarray) -> list:
+    n = S.shape[0]
+    baselines = []
+    for i in range(n):
+        row = S[i, :]
+        mask = np.isfinite(row)
+        if i < mask.size:
+            mask[i] = False
+        baseline_i = row[mask]
+        baselines.append(baseline_i)
+    return baselines
+
+
+def precompute_pairwise_pznl(S: np.ndarray, baselines: list) -> tuple:
+    n = S.shape[0]
+    P = np.full((n, n), np.nan, dtype=float)
+    Z = np.full((n, n), np.nan, dtype=float)
+    NL = np.full((n, n), np.nan, dtype=float)
+
+    for i in range(n):
+        F_i = baselines[i]
+        m = F_i.size
+        if m == 0:
+            continue
+        row = S[i, :]
+        for j in range(n):
+            s_ij = float(row[j])
+            if not np.isfinite(s_ij):
+                continue
+            count_ge = int(np.sum(F_i >= s_ij))
+            p = (count_ge + 1.0) / (m + 1.0)
+            P[i, j] = p
+            Z[i, j] = float(stats.norm.isf(p))
+            NL[i, j] = float(-np.log10(p))
+    return P, Z, NL
+
+
+def compute_per_run_observed(
+    S: np.ndarray,
+    baselines: list,
+    P: np.ndarray,
+    Z: np.ndarray,
+    NL: np.ndarray,
 ) -> dict:
+    n = S.shape[0]
+    diag_scores = np.empty(n, dtype=float)
+    p_obs = np.empty(n, dtype=float)
+    z_obs = np.empty(n, dtype=float)
+    neglog10p_obs = np.empty(n, dtype=float)
+    baseline_sizes = np.empty(n, dtype=int)
+
+    for i in range(n):
+        diag_scores[i] = float(S[i, i])
+        baseline_sizes[i] = int(baselines[i].size)
+
+        p = float(P[i, i])
+        z = float(Z[i, i])
+        nl = float(NL[i, i])
+
+        if not np.isfinite(p) or not np.isfinite(z) or not np.isfinite(nl):
+            p_obs[i] = np.nan
+            z_obs[i] = np.nan
+            neglog10p_obs[i] = np.nan
+        else:
+            p_obs[i] = p
+            z_obs[i] = z
+            neglog10p_obs[i] = nl
+
+    result = {
+        "diag_scores": diag_scores,
+        "p_obs": p_obs,
+        "z_obs": z_obs,
+        "neglog10p_obs": neglog10p_obs,
+        "baseline_sizes": baseline_sizes,
+    }
+    return result
+
+def compute_global_stats(
+    p_vals: np.ndarray,
+    z_vals: np.ndarray,
+    neglog10p_vals: np.ndarray,
+) -> dict:
+    p = np.asarray(p_vals, dtype=float)
     z = np.asarray(z_vals, dtype=float)
-    z = z[np.isfinite(z)]
-    n = z.size
-    if n == 0:
-        raise ValueError("No valid score values found")
+    nl = np.asarray(neglog10p_vals, dtype=float)
 
-    z_max = float(np.max(z))
-    rng = np.random.default_rng(rng_seed)
+    mask = np.isfinite(p) & np.isfinite(z) & np.isfinite(nl)
+    if not np.any(mask):
+        raise ValueError("No valid per-run values for global statistics")
 
-    count_ge = 0
-    for _ in range(n_sim):
-        sim = rng.standard_normal(size=n)
-        if np.max(sim) >= z_max:
-            count_ge += 1
+    p_valid = p[mask]
+    z_valid = z[mask]
+    nl_valid = nl[mask]
+    
+    mean_neglog10p = float(np.mean(nl_valid))
+    max_z = float(np.max(z_valid))
+    skew_z = float(stats.skew(z_valid, bias=False))
+    
+    stats_dict = {
+        "mean_neglog10p": mean_neglog10p,
+        "max_z": max_z,
+        "skew_z": skew_z,
+        "n_effective": int(z_valid.size),
+    }
 
-    p_mc = (count_ge + 1.0) / (n_sim + 1.0)
-    expected_exceed = n_sim * p_global_analytic
+    return stats_dict
+
+
+def random_derangement(n: int, rng: np.random.Generator) -> np.ndarray:
+    while True:
+        perm = rng.permutation(n)
+        if not np.any(perm == np.arange(n)):
+            return perm
+
+
+def compute_per_run_from_perm(
+    P: np.ndarray,
+    Z: np.ndarray,
+    NL: np.ndarray,
+    perm: np.ndarray,
+) -> dict:
+    n = P.shape[0]
+    idx = np.arange(n, dtype=int)
+
+    p_perm = P[idx, perm]
+    z_perm = Z[idx, perm]
+    neglog10p_perm = NL[idx, perm]
 
     return {
-        "n": n,
-        "z_max": z_max,
-        "n_sim": n_sim,
-        "count_ge": count_ge,
-        "p_mc": p_mc,
-        "expected_exceed": expected_exceed,
+        "p_perm": p_perm,
+        "z_perm": z_perm,
+        "neglog10p_perm": neglog10p_perm,
     }
 
 
-def extreme_value_test(z_vals: np.ndarray, n_sim: int = 1_000_000) -> None:
-    analytic = analytic_extreme_p(z_vals)
-    mc = monte_carlo_extreme_p(z_vals, n_sim=n_sim, p_global_analytic=analytic["p_global"])
+def _permutation_chunk_worker(args) -> dict:
+    (
+        P,
+        Z,
+        NL,
+        scheme,
+        n_perms_chunk,
+        rng_seed,
+    ) = args
 
-    print("Extreme-value test for max score under N(0,1) null")
-    print("-------------------------------------------------------------")
-    print(f"Number of runs (n):                      {analytic['n']}")
-    print(f"Maximum observed cross_run_z:            {analytic['z_max']:.6f}")
-    print()
-    print("Analytic calculation (independent N(0,1) z-scores):")
-    print(f"  Single-run tail P(Z >= z_max):         {analytic['p_single']:.6e}")
-    print(
-        f"  Global P(max Z >= z_max):              {analytic['p_global']:.6e} "
-        f"({one_in_string(analytic['p_global'])})"
-    )
-    print()
-    print("Monte Carlo check (max of n standard normals):")
-    print(f"  Simulations (N_SIM):                   {mc['n_sim']}")
-    print(f"  Actual exceedances (sim max >= z_max): {mc['count_ge']}")
-    print(
-        f"  Expected exceedances under analytic p: {mc['expected_exceed']:.2f} "
-        f"(= N_SIM * analytic_global_p)"
-    )
-    print(
-        f"  Empirical P(max Z >= z_max):           {mc['p_mc']:.6e} "
-        f"({one_in_string(mc['p_mc'])})"
-    )
-
-
-def test_positive_asymmetry(
-    z_vals: np.ndarray,
-    n_perm: int = 1_000_000,
-    rng_seed: int = 123,
-) -> None:
-    z = np.asarray(z_vals, dtype=float)
-    z = z[np.isfinite(z)]
-    n = z.size
-    if n == 0:
-        print("No finite z-scores available.")
-        return
-
-    mean_z = float(z.mean())
-    std_z = float(z.std(ddof=0))
-    if std_z == 0.0:
-        print(f"All z-scores are identical (n={n}), cannot test asymmetry.")
-        return
-
-    # Use library skewness for the observed statistic
-    skew_obs = float(stats.skew(z, bias=False))
-
-    abs_z = np.abs(z)
+    n = P.shape[0]
     rng = np.random.default_rng(rng_seed)
+    stat_names = ["mean_neglog10p", "max_z", "skew_z",]
+    chunk_values = {name: np.empty(n_perms_chunk, dtype=float) for name in stat_names}
 
-    skew_perm = np.empty(n_perm, dtype=float)
-    for b in range(n_perm):
-        signs = rng.integers(0, 2, size=n, dtype=int) * 2 - 1
-        z_perm = abs_z * signs
-        skew_perm[b] = float(stats.skew(z_perm, bias=False))
-
-    p_one_sided = (np.sum(skew_perm >= skew_obs) + 1.0) / (n_perm + 1.0)
-
-    frac_pos = float((z > 0).mean())
-    frac_neg = float((z < 0).mean())
-
-    print("Positive-asymmetry sign-flip test on cross-run z-scores")
-    print(f"  n runs                      : {n}")
-    print(f"  mean(z)                     : {mean_z:.4f}")
-    print(f"  std(z)                      : {std_z:.4f}")
-    print(f"  fraction z > 0              : {frac_pos:.3f}")
-    print(f"  fraction z < 0              : {frac_neg:.3f}")
-    print(f"  observed skewness           : {skew_obs:.4f}")
-    print(f"  sign-flip permutations      : {n_perm}")
-    print(f"  one-sided p (skew > 0)      : {p_one_sided:.3g}")
-
-
-def run_tail_enrichment_tests(
-    z_vals: np.ndarray,
-    n_mc: int = 4000,
-    rng_seed: int = 12345,
-) -> None:
-    """
-    One-sided higher-criticism tests for right and left tails of a z-score sample,
-    with Monte Carlo calibration under i.i.d. N(0,1) null.
-    """
-    z = np.asarray(z_vals, dtype=float).ravel()
-    z = z[~np.isnan(z)]
-    n = z.size
-    if n == 0:
-        print("No valid z-scores provided.")
-        return
-
-    eps = 1e-16
-
-    def one_sided_pvals(z_arr: np.ndarray, tail: str) -> np.ndarray:
-        if tail == "right":
-            p = stats.norm.sf(z_arr)  # P(Z >= z)
-        elif tail == "left":
-            p = stats.norm.cdf(z_arr)  # P(Z <= z)
+    for b in range(n_perms_chunk):
+        if scheme == "derangements":
+            perm = random_derangement(n, rng)
+        elif scheme == "all_permutations":
+            perm = rng.permutation(n)
         else:
-            raise ValueError("tail must be 'right' or 'left'")
-        p = np.asarray(p, dtype=float)
-        p = np.clip(p, eps, 1.0 - eps)
-        p.sort()
-        return p
+            raise ValueError("Unknown scheme: " + scheme)
 
-    def compute_hc(p_sorted: np.ndarray) -> float:
-        n_local = p_sorted.size
-        if n_local == 0:
-            return 0.0
-        idx = np.arange(1, n_local + 1, dtype=float)
-        lower = 1.0 / n_local
-        upper = 0.5
-        mask = (p_sorted >= lower) & (p_sorted <= upper)
-        ps = p_sorted[mask]
-        ks = idx[mask]
-        if ps.size == 0:
-            return 0.0
-        x = ks / n_local
-        numer = x - ps
-        denom = np.sqrt(ps * (1.0 - ps))
-        hc_vals = np.sqrt(n_local) * numer / denom
-        return float(np.max(hc_vals))
+        per_run_perm = compute_per_run_from_perm(P, Z, NL, perm)
+        stats_perm = compute_global_stats(
+            per_run_perm["p_perm"],
+            per_run_perm["z_perm"],
+            per_run_perm["neglog10p_perm"],
+        )
 
-    p_right = one_sided_pvals(z, "right")
-    p_left = one_sided_pvals(z, "left")
+        for name in stat_names:
+            chunk_values[name][b] = stats_perm[name]
 
-    hc_right_obs = compute_hc(p_right)
-    hc_left_obs = compute_hc(p_left)
+    return chunk_values
 
-    rng = np.random.default_rng(rng_seed)
-    hc_right_null = np.empty(n_mc, dtype=float)
-    hc_left_null = np.empty(n_mc, dtype=float)
 
-    for i in range(n_mc):
-        z_sim = rng.standard_normal(n)
-        p_r_sim = one_sided_pvals(z_sim, "right")
-        p_l_sim = one_sided_pvals(z_sim, "left")
-        hc_right_null[i] = compute_hc(p_r_sim)
-        hc_left_null[i] = compute_hc(p_l_sim)
+def calibrate_permutations(
+    P: np.ndarray,
+    Z: np.ndarray,
+    NL: np.ndarray,
+    p_obs: np.ndarray,
+    z_obs: np.ndarray,
+    neglog10p_obs: np.ndarray,
+    scheme: str,
+    n_perms: int,
+    rng_seed: int,
+) -> dict:
+    obs_stats = compute_global_stats(p_obs, z_obs, neglog10p_obs)
+    stat_names = ["mean_neglog10p", "max_z", "skew_z",]
 
-    hc_right_p = (1.0 + np.sum(hc_right_null >= hc_right_obs)) / (n_mc + 1.0)
-    hc_left_p = (1.0 + np.sum(hc_left_null >= hc_left_obs)) / (n_mc + 1.0)
+    n_workers = os.cpu_count() or 1
+    if n_workers < 1:
+        n_workers = 1
 
-    print(f"Sample size (z-scores): {n}")
-    print("Right-tail higher-criticism (enrichment of large positive z):")
-    print(f"  HC statistic = {hc_right_obs:.4f}")
-    print(f"  Monte Carlo p-value = {hc_right_p:.4g}")
-    print("Left-tail higher-criticism (enrichment of large negative z):")
-    print(f"  HC statistic = {hc_left_obs:.4f}")
-    print(f"  Monte Carlo p-value = {hc_left_p:.4g}")
+    target_chunks = max(1, n_workers * 4)
+    base_chunk_size = max(1, n_perms // target_chunks)
+    if base_chunk_size <= 0:
+        base_chunk_size = 1
 
+    chunk_sizes = []
+    total = 0
+    while total < n_perms:
+        remaining = n_perms - total
+        size = min(base_chunk_size, remaining)
+        chunk_sizes.append(size)
+        total += size
+
+    args_list = []
+    for idx, size in enumerate(chunk_sizes):
+        chunk_seed = rng_seed + idx
+        args_list.append(
+            (
+                P,
+                Z,
+                NL,
+                scheme,
+                size,
+                chunk_seed,
+            )
+        )
+
+    chunk_results = []
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = [executor.submit(_permutation_chunk_worker, a) for a in args_list]
+        for fut in futures:
+            chunk_results.append(fut.result())
+
+    null_values = {}
+    for name in stat_names:
+        parts = [cr[name] for cr in chunk_results]
+        null_values[name] = np.concatenate(parts, axis=0)
+
+    summary = {}
+    for name in stat_names:
+        obs = obs_stats[name]
+        null_arr = null_values[name]
+        count_ge = int(np.sum(null_arr >= obs))
+        p_perm = (count_ge + 1.0) / (n_perms + 1.0)
+        null_mean = float(np.mean(null_arr))
+        null_std = float(np.std(null_arr, ddof=0))
+        z_shift = (obs - null_mean) / null_std if null_std > 0.0 else np.nan
+
+        summary[name] = {
+            "obs": obs,
+            "null_mean": null_mean,
+            "null_std": null_std,
+            "z_shift_vs_null": z_shift,
+            "p_perm": p_perm,
+        }
+
+    summary["n_effective"] = obs_stats["n_effective"]
+    return summary
+
+
+def write_per_run_leak_scores(
+    runs_df: pd.DataFrame,
+    diag_scores: np.ndarray,
+    p_obs: np.ndarray,
+    z_obs: np.ndarray,
+    neglog10p_obs: np.ndarray,
+    baseline_sizes: np.ndarray,
+) -> None:
+    os.makedirs(os.path.dirname(PER_RUN_LEAK_TSV), exist_ok=True)
+    with open(PER_RUN_LEAK_TSV, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        header = [
+            "run_index",
+            "condition",
+            "diag_score",
+            "baseline_size",
+            "empirical_p",
+            "z_from_p",
+            "neglog10_p",
+        ]
+        writer.writerow(header)
+
+        for idx, row in runs_df.iterrows():
+            run_index = int(row["run_index"])
+            cond = str(row["condition"])
+
+            writer.writerow(
+                [
+                    run_index,
+                    cond,
+                    float(diag_scores[idx]),
+                    int(baseline_sizes[idx]),
+                    float(p_obs[idx]),
+                    float(z_obs[idx]),
+                    float(neglog10p_obs[idx]),
+                ]
+            )
+
+
+def write_perm_summary(
+    derange_summary: dict,
+    allperm_summary: dict,
+) -> None:
+    os.makedirs(os.path.dirname(PERM_SUMMARY_TSV), exist_ok=True)
+    stat_names = ["mean_neglog10p", "max_z", "skew_z",]
+
+    with open(PERM_SUMMARY_TSV, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        header = [
+            "statistic",
+            "scheme",
+            "obs",
+            "null_mean",
+            "null_std",
+            "z_shift_vs_null",
+            "p_perm",
+            "n_effective",
+        ]
+        writer.writerow(header)
+
+        for scheme_name, summary in [
+            ("derangements", derange_summary),
+            ("all_permutations", allperm_summary),
+        ]:
+            n_eff = summary["n_effective"]
+            for stat in stat_names:
+                s = summary[stat]
+                writer.writerow(
+                    [
+                        stat,
+                        scheme_name,
+                        s["obs"],
+                        s["null_mean"],
+                        s["null_std"],
+                        s["z_shift_vs_null"],
+                        s["p_perm"],
+                        n_eff,
+                    ]
+                )
+
+def print_interpretation(
+    derange_summary: dict,
+    allperm_summary: dict,
+    n_runs: int,
+    n_derange: int,
+    n_allperm: int,
+) -> None:
+    print()
+    print("Global leak diagnostics based on per-secret empirical p-values")
+    print("----------------------------------------------------------------")
+    print(
+        f"Number of runs used (n_effective): "
+        f"{derange_summary['n_effective']} of {n_runs}"
+    )
+    print(f"Derangement permutations   : {n_derange}")
+    print(f"All-permutations permutations: {n_allperm}")
+    print()
+
+    stat_names = ["max_z", "skew_z", "mean_neglog10p"]
+
+    for name in stat_names:
+        s_d = derange_summary[name]
+        s_a = allperm_summary[name]
+
+        print(f"Statistic: {name}")
+        print("  Derangements null:")
+        print(f"    obs       = {s_d['obs']:.4f}")
+        print(f"    null mean = {s_d['null_mean']:.4f}, std = {s_d['null_std']:.4f}")
+        print(
+            f"    shift     = {s_d['z_shift_vs_null']:.3f} sd, "
+            f"p_perm = {s_d['p_perm']:.4g}"
+        )
+
+        print("  All-permutations null:")
+        print(f"    obs       = {s_a['obs']:.4f}")
+        print(f"    null mean = {s_a['null_mean']:.4f}, std = {s_a['null_std']:.4f}")
+        print(
+            f"    shift     = {s_a['z_shift_vs_null']:.3f} sd, "
+            f"p_perm = {s_a['p_perm']:.4g}"
+        )
+        print()
 
 def main() -> None:
-    tsv_path = os.path.join("sonnet_cot_experiment", "alignment_results.tsv")
+    print(f"Loading runs from {RUNS_TSV}")
+    runs_df = load_runs(RUNS_TSV)
+    n_runs = runs_df.shape[0]
+    print(f"Found {n_runs} runs")
 
-    z_vals = load_z_scores(tsv_path)
+    print(f"Loading score matrix from {SCORE_MATRIX_TSV}")
+    S = load_score_matrix(SCORE_MATRIX_TSV, n_runs)
+    print(f"Score matrix shape: {S.shape}")
 
-    run_tail_enrichment_tests(z_vals, n_mc=4000, rng_seed=12345)
-    test_positive_asymmetry(z_vals, n_perm=1_000_000, rng_seed=123)
-    extreme_value_test(z_vals, n_sim=1_000_000)
+    print("Building per-secret baselines F_i from off-diagonal scores")
+    baselines = build_baselines(S)
+
+    print("Precomputing per-pair empirical p, z, and -log10 p")
+    P, Z, NL = precompute_pairwise_pznl(S, baselines)
+
+    print("Computing observed per-run leak scores (p_i, z_i, -log10 p_i)")
+    obs_per_run = compute_per_run_observed(S, baselines, P, Z, NL)
+    diag_scores = obs_per_run["diag_scores"]
+    p_obs = obs_per_run["p_obs"]
+    z_obs = obs_per_run["z_obs"]
+    neglog10p_obs = obs_per_run["neglog10p_obs"]
+    baseline_sizes = obs_per_run["baseline_sizes"]
+
+    print(f"Writing per-run leak scores to {PER_RUN_LEAK_TSV}")
+    write_per_run_leak_scores(
+        runs_df,
+        diag_scores,
+        p_obs,
+        z_obs,
+        neglog10p_obs,
+        baseline_sizes,
+    )
+
+    print("Calibrating permutation null (derangements only)")
+    derange_summary = calibrate_permutations(
+        P=P,
+        Z=Z,
+        NL=NL,
+        p_obs=p_obs,
+        z_obs=z_obs,
+        neglog10p_obs=neglog10p_obs,
+        scheme="derangements",
+        n_perms=DERANGEMENT_PERMS,
+        rng_seed=RNG_SEED_DERANGE,
+    )
+
+    print("Calibrating permutation null (all permutations)")
+    allperm_summary = calibrate_permutations(
+        P=P,
+        Z=Z,
+        NL=NL,
+        p_obs=p_obs,
+        z_obs=z_obs,
+        neglog10p_obs=neglog10p_obs,
+        scheme="all_permutations",
+        n_perms=ALL_PERMS,
+        rng_seed=RNG_SEED_ALLPERM,
+    )
+
+    print(f"Writing permutation summary to {PERM_SUMMARY_TSV}")
+    write_perm_summary(derange_summary, allperm_summary)
+
+    print_interpretation(
+        derange_summary=derange_summary,
+        allperm_summary=allperm_summary,
+        n_runs=n_runs,
+        n_derange=DERANGEMENT_PERMS,
+        n_allperm=ALL_PERMS,
+    )
 
 
 if __name__ == "__main__":
