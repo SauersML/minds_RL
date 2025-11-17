@@ -623,6 +623,41 @@ def run_condition_difference_tests(
         "delta_skew_p_one_sided": p_delta_one_sided,
     }
 
+def run_left_tail_hotness_per_condition(z_vals: np.ndarray, conditions: np.ndarray) -> dict:
+    z_vals = np.asarray(z_vals, dtype=float)
+    cond = np.asarray(conditions)
+    results = {}
+
+    for label in np.unique(cond):
+        mask = np.isfinite(z_vals) & (cond == label) & (z_vals < 0.0)
+        z_neg = z_vals[mask]
+        m = z_neg.size
+        if m == 0:
+            results[label] = {
+                "m_neg": 0,
+                "T_obs": np.nan,
+                "p_hot": np.nan,
+            }
+            continue
+
+        p_left = stats.norm.cdf(z_neg)
+        w = -np.log10(p_left)
+        T_obs = float(np.mean(w))
+
+        B = 100000
+        rng = np.random.default_rng(24680)
+        U = rng.uniform(0.0, 0.5, size=(B, m))
+        T_null = -np.log10(U).mean(axis=1)
+        p_hot = (1.0 + np.sum(T_null >= T_obs)) / (B + 1.0)
+
+        results[label] = {
+            "m_neg": int(m),
+            "T_obs": T_obs,
+            "p_hot": float(p_hot),
+        }
+
+    return results
+
 def main() -> None:
     print(f"Loading runs from {RUNS_TSV}")
     runs_df = load_runs(RUNS_TSV)
@@ -705,6 +740,22 @@ def main() -> None:
         n_derange=DERANGEMENT_PERMS,
         n_allperm=ALL_PERMS,
     )
+
+    print("Running left-tail hotness tests within each condition using z_perm_calibrated_derangements")
+    left_tail_tests = run_left_tail_hotness_per_condition(
+        derange_summary["per_run_z_perm_calibrated"],
+        conditions,
+    )
+
+    for label, res in left_tail_tests.items():
+        print()
+        print(f"Left tail hotness in {label} runs")
+        print(f"  number of runs with z < 0: {res['m_neg']}")
+        print(f"  mean -log10(p_left): {res['T_obs']:.4f}")
+        print(
+            "  one-sided p_perm (left tail hotter than Uniform(0,0.5) null): "
+            f"{res['p_hot']:.5f}"
+        )
 
     print("Running experimental vs control skew tests using within-condition derangement null")
     cond_tests = run_condition_difference_tests(
