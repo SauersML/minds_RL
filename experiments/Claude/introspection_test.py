@@ -222,6 +222,7 @@ def _permutation_chunk_worker(args) -> dict:
     stat_names = ["mean_neglog10p", "max_z", "skew_z"]
     chunk_values = {name: np.empty(n_perms_chunk, dtype=float) for name in stat_names}
     counts_ge = np.zeros(n, dtype=np.int64)
+    counts_ge_abs = np.zeros(n, dtype=np.int64)
 
     for b in range(n_perms_chunk):
         if scheme == "derangements":
@@ -244,8 +245,10 @@ def _permutation_chunk_worker(args) -> dict:
         z_perm = per_run_perm["z_perm"]
         mask = np.isfinite(z_obs) & np.isfinite(z_perm)
         counts_ge[mask] += (z_perm[mask] >= z_obs[mask])
+        counts_ge_abs[mask] += (np.abs(z_perm[mask]) >= np.abs(z_obs[mask]))
 
     chunk_values["counts_ge_z"] = counts_ge
+    chunk_values["counts_ge_z_abs"] = counts_ge_abs
     return chunk_values
 
 def calibrate_permutations(
@@ -309,8 +312,10 @@ def calibrate_permutations(
 
     n = P.shape[0]
     total_counts_ge = np.zeros(n, dtype=np.int64)
+    total_counts_ge_abs = np.zeros(n, dtype=np.int64)
     for cr in chunk_results:
         total_counts_ge += cr["counts_ge_z"]
+        total_counts_ge_abs += cr["counts_ge_z_abs"]
 
     summary = {}
     for name in stat_names:
@@ -334,13 +339,16 @@ def calibrate_permutations(
 
     z_obs_arr = np.asarray(z_obs, dtype=float)
     per_run_p_perm = np.full(n, np.nan, dtype=float)
+    per_run_p_perm_two_sided = np.full(n, np.nan, dtype=float)
     per_run_z_perm = np.full(n, np.nan, dtype=float)
 
     valid = np.isfinite(z_obs_arr)
     per_run_p_perm[valid] = (total_counts_ge[valid] + 1.0) / (n_perms + 1.0)
+    per_run_p_perm_two_sided[valid] = (total_counts_ge_abs[valid] + 1.0) / (n_perms + 1.0)
     per_run_z_perm[valid] = stats.norm.isf(per_run_p_perm[valid])
 
     summary["per_run_p_perm"] = per_run_p_perm
+    summary["per_run_p_perm_two_sided"] = per_run_p_perm_two_sided
     summary["per_run_z_perm_calibrated"] = per_run_z_perm
 
     return summary
@@ -353,6 +361,7 @@ def write_per_run_leak_scores(
     neglog10p_obs: np.ndarray,
     baseline_sizes: np.ndarray,
     derange_p_perm: np.ndarray,
+    derange_p_perm_two_sided: np.ndarray,
     derange_z_perm: np.ndarray,
     allperm_p_perm: np.ndarray,
     allperm_z_perm: np.ndarray,
@@ -369,6 +378,7 @@ def write_per_run_leak_scores(
             "z_from_p",
             "neglog10_p",
             "perm_p_derangements",
+            "perm_p_derangements_two_sided",
             "z_perm_calibrated_derangements",
             "perm_p_all_permutations",
             "z_perm_calibrated_all_permutations",
@@ -389,6 +399,7 @@ def write_per_run_leak_scores(
                     float(z_obs[idx]),
                     float(neglog10p_obs[idx]),
                     float(derange_p_perm[idx]),
+                    float(derange_p_perm_two_sided[idx]),
                     float(derange_z_perm[idx]),
                     float(allperm_p_perm[idx]),
                     float(allperm_z_perm[idx]),
@@ -667,6 +678,7 @@ def main() -> None:
         neglog10p_obs,
         baseline_sizes,
         derange_summary["per_run_p_perm"],
+        derange_summary["per_run_p_perm_two_sided"],
         derange_summary["per_run_z_perm_calibrated"],
         allperm_summary["per_run_p_perm"],
         allperm_summary["per_run_z_perm_calibrated"],
