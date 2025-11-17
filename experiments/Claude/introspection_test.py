@@ -186,7 +186,7 @@ def _permutation_chunk_worker(args) -> dict:
 
     n = P.shape[0]
     rng = np.random.default_rng(rng_seed)
-    stat_names = ["mean_neglog10p", "max_z", "skew_z", "hc_right"]
+    stat_names = ["mean_neglog10p", "max_z", "skew_z"]
     chunk_values = {name: np.empty(n_perms_chunk, dtype=float) for name in stat_names}
     counts_ge = np.zeros(n, dtype=np.int64)
 
@@ -227,7 +227,7 @@ def calibrate_permutations(
     rng_seed: int,
 ) -> dict:
     obs_stats = compute_global_stats(p_obs, z_obs, neglog10p_obs)
-    stat_names = ["mean_neglog10p", "max_z", "skew_z", "hc_right"]
+    stat_names = ["mean_neglog10p", "max_z", "skew_z"]
 
     n_workers = os.cpu_count() or 1
     if n_workers < 1:
