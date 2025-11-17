@@ -23,6 +23,11 @@ TRIALS_JSONL_PATH = os.path.join(OUTPUT_DIR, "trials.jsonl")
 GENERAL_PROMPT1_PATH = "general_prompt1.txt"
 GENERAL_PROMPT2_PATH = "general_prompt2.txt"
 
+# Where to inject the context for experimental runs:
+# "phase1" -> above the first user message (current behavior)
+# "phase2" -> above the second user message instead
+CONTEXT_TARGET_ROUND = "phase1"
+
 UPPERCASE_50_PATTERN = re.compile(r"[A-Z]{50}")
 
 client = anthropic.Anthropic()
@@ -51,9 +56,9 @@ def build_phase1_prompt(condition, context_text):
         flush=True,
     )
 
-    if condition == "experimental":
+    if condition == "experimental" and CONTEXT_TARGET_ROUND == "phase1":
         print(
-            "[build_phase1_prompt] Using experimental condition, appending context",
+            "[build_phase1_prompt] Using experimental condition, appending context in phase 1",
             flush=True,
         )
         context_prompt = context_text
@@ -65,13 +70,13 @@ def build_phase1_prompt(condition, context_text):
         return combined
 
     print(
-        f"[build_phase1_prompt] Returning control prompt length: {len(general_prompt1)} characters",
+        f"[build_phase1_prompt] Returning control/unchanged prompt length: {len(general_prompt1)} characters",
         flush=True,
     )
     return general_prompt1
 
 
-def build_phase2_prompt(condition):
+def build_phase2_prompt(condition, context_text):
     print(
         f"[build_phase2_prompt] Building phase 2 prompt for condition={condition}",
         flush=True,
@@ -82,6 +87,20 @@ def build_phase2_prompt(condition):
         f"[build_phase2_prompt] Prompt length: {len(general_prompt2)} characters",
         flush=True,
     )
+
+    if condition == "experimental" and CONTEXT_TARGET_ROUND == "phase2":
+        print(
+            "[build_phase2_prompt] Using experimental condition, appending context in phase 2",
+            flush=True,
+        )
+        context_prompt = context_text
+        combined = context_prompt + "\n\n" + general_prompt2
+        print(
+            f"[build_phase2_prompt] Combined prompt length: {len(combined)} characters",
+            flush=True,
+        )
+        return combined
+
     return general_prompt2
 
 
@@ -393,7 +412,7 @@ def run_single_trial(trial_index, condition, context_text):
     )
     print("[run_single_trial] Appended phase 1 response to conversation", flush=True)
 
-    phase2_prompt = build_phase2_prompt(condition)
+    phase2_prompt = build_phase2_prompt(condition, context_text)
     print(
         f"[run_single_trial] Phase 2 prompt length: {len(phase2_prompt)} characters",
         flush=True,
