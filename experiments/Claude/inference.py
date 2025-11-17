@@ -4,7 +4,7 @@ import re
 import time
 import random
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import anthropic
 
@@ -435,7 +435,12 @@ def run_single_trial(trial_index, condition, context_text, context_target_round)
     conversation.append(
         {
             "role": "user",
-            "content": phase2_prompt,
+            "content": [
+                {
+                    "type": "text",
+                    "text": phase2_prompt,
+                }
+            ],
         }
     )
     print("[run_single_trial] Added phase 2 user prompt to conversation", flush=True)
@@ -567,7 +572,7 @@ def main():
         flush=True,
     )
 
-    trial_records = []
+    # No big in-memory trial_records; save as we go.
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_TRIALS) as executor:
         futures = []
         for t_index, cond, context_target_round in trial_configs:
@@ -580,27 +585,16 @@ def main():
                     context_target_round,
                 )
             )
-        for future in futures:
+
+        # Persist each trial as soon as it finishes.
+        for future in as_completed(futures):
             record = future.result()
-            trial_records.append(record)
+            append_trial_jsonl(record)
+            append_summary_row(record)
             print(
-                f"[main] Collected trial {record.get('trial_index')} condition={record.get('condition')}",
+                f"[main] Persisted trial {record.get('trial_index')} condition={record.get('condition')}",
                 flush=True,
             )
-
-    trial_records.sort(key=lambda r: r.get("trial_index", 0))
-    print(
-        f"[main] Writing {len(trial_records)} trial records to JSONL and TSV in trial_index order",
-        flush=True,
-    )
-
-    for record in trial_records:
-        append_trial_jsonl(record)
-        append_summary_row(record)
-        print(
-            f"[main] Persisted trial {record.get('trial_index')} condition={record.get('condition')}",
-            flush=True,
-        )
 
     print("[main] All trials completed and persisted", flush=True)
 
