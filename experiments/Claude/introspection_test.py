@@ -479,8 +479,9 @@ def print_interpretation(
         print()
 
 def _binary_kl(x: float, pi: float) -> float:
-    if x <= 0.0 or x >= 1.0 or pi <= 0.0 or pi >= 1.0:
-        return 0.0
+    eps = 1e-12
+    x = min(max(x, eps), 1.0 - eps)
+    pi = min(max(pi, eps), 1.0 - eps)
     return x * np.log(x / pi) + (1.0 - x) * np.log((1.0 - x) / (1.0 - pi))
 
 
