@@ -294,6 +294,7 @@ def ensure_summary_header():
         with open(SUMMARY_PATH, "w", encoding="utf-8") as f:
             header = [
                 "condition",
+                "context_target_round",
                 "phase1_exact_i_understand",
                 "phase1_secret_string",
                 "phase2_guessed_string",
@@ -322,6 +323,7 @@ def append_summary_row(trial_record):
 
         fields = [
             escape_for_tsv(condition),
+            escape_for_tsv(trial_record.get("context_target_round", "")),
             "True" if exact_flag else "False",
             escape_for_tsv(phase1_secret),
             escape_for_tsv(phase2_guess),
