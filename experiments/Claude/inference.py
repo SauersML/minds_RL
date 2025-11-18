@@ -411,16 +411,11 @@ def run_single_trial(trial_index, condition, context_text, context_target_round)
     conversation.append(
         {
             "role": "assistant",
-            "content": [
-                {
-                    "type": "text",
-                    "text": phase1_visible_text or "",
-                }
-            ],
+            "content": response1.content,
         }
     )
     print(
-        "[run_single_trial] Appended phase 1 visible text only to conversation",
+        "[run_single_trial] Appended full phase 1 response (thinking + text) to conversation",
         flush=True,
     )
 
