@@ -600,6 +600,31 @@ def _binary_kl(x: float, pi: float) -> float:
     return x * np.log(x / pi) + (1.0 - x) * np.log((1.0 - x) / (1.0 - pi))
 
 
+def _bj_one_sample(p_values: np.ndarray, max_p: float = 0.5) -> float:
+    p_values = np.asarray(p_values, dtype=float)
+    mask = np.isfinite(p_values)
+    p = p_values[mask]
+    n = p.size
+    if n == 0:
+        return 0.0
+
+    order = np.argsort(p)
+    p_sorted = p[order]
+
+    bj_max = 0.0
+    for k in range(1, n + 1):
+        p_k = p_sorted[k - 1]
+        if p_k > max_p:
+            break
+
+        x = k / n
+        bj_val = n * _binary_kl(x, float(p_k))
+        if bj_val > bj_max:
+            bj_max = bj_val
+
+    return bj_max
+
+
 def _bj_scan(p_values: np.ndarray, is_group_A: np.ndarray, max_p: float = 0.5) -> float:
     p_values = np.asarray(p_values, dtype=float)
     is_group_A = np.asarray(is_group_A, dtype=bool)
@@ -692,6 +717,50 @@ def run_bj_condition_enrichment(
         "p_perm": p_perm,
     }
 
+
+def run_bj_overall(
+    p_left: np.ndarray,
+    n_perms: int,
+    rng_seed: int,
+    max_p: float = 0.5,
+) -> dict:
+    p_left = np.asarray(p_left, dtype=float)
+    mask = np.isfinite(p_left)
+    if not np.any(mask):
+        raise ValueError("No valid runs for BJ overall test")
+
+    p_vals = p_left[mask]
+    n_used = p_vals.size
+
+    bj_obs = _bj_one_sample(p_vals, max_p=max_p)
+
+    rng = np.random.default_rng(rng_seed)
+    bj_null = np.empty(n_perms, dtype=float)
+
+    for b in range(n_perms):
+        u = rng.random(n_used)
+        bj_null[b] = _bj_one_sample(u, max_p=max_p)
+
+    finite = np.isfinite(bj_null)
+    if not np.any(finite):
+        p_perm = np.nan
+        null_mean = np.nan
+        null_std = np.nan
+    else:
+        null_arr = bj_null[finite]
+        p_perm = (1.0 + np.sum(null_arr >= bj_obs)) / (1.0 + null_arr.size)
+        null_mean = float(np.mean(null_arr))
+        null_std = float(np.std(null_arr, ddof=0))
+
+    return {
+        "bj_obs": bj_obs,
+        "null_mean": null_mean,
+        "null_std": null_std,
+        "p_perm": p_perm,
+        "n_used": n_used,
+    }
+
+
 def main() -> None:
     print(f"Loading runs from {RUNS_TSV}")
     runs_df = load_runs(RUNS_TSV)
@@ -764,27 +833,29 @@ def main() -> None:
     )
 
     print(
-        "\nRunning Berk–Jones enrichment test on permutation-calibrated leak p-values"
+        "\nRunning Berk–Jones overall test on permutation-calibrated leak p-values"
     )
-    bj_cond = run_bj_condition_enrichment(
+    bj_overall = run_bj_overall(
         p_left=derange_summary["per_run_p_perm_high"],
-        conditions=conditions,
         n_perms=LABEL_PERMS,
         rng_seed=RNG_SEED_LABEL,
     )
 
-    print("Berk–Jones condition-enrichment on permutation-calibrated leak p-values")
+    print("Berk–Jones overall enrichment on permutation-calibrated leak p-values")
     print(
-        "  BJ statistic (control enriched among small leak p-values): "
-        f"{bj_cond['bj_obs']:.4f}"
+        "  BJ statistic (overall enrichment of small leak p-values): "
+        f"{bj_overall['bj_obs']:.4f}"
     )
     print(
         "  Null mean ± std: "
-        f"{bj_cond['null_mean']:.4f} ± {bj_cond['null_std']:.4f}"
+        f"{bj_overall['null_mean']:.4f} ± {bj_overall['null_std']:.4f}"
     )
     print(
         "  Permutation p-value: "
-        f"{bj_cond['p_perm']:.5f}"
+        f"{bj_overall['p_perm']:.5f}"
+    )
+    print(
+        f"  Number of runs used: {bj_overall['n_used']}"
     )
 
 if __name__ == "__main__":
