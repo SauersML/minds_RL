@@ -408,10 +408,13 @@ def run_single_trial(trial_index, condition, context_text, context_target_round)
         flush=True,
     )
 
+    assistant_message_dict = response1.to_dict()
+    assistant_content = assistant_message_dict["content"]
+
     conversation.append(
         {
             "role": "assistant",
-            "content": response1.content,
+            "content": assistant_content,
         }
     )
     print(
