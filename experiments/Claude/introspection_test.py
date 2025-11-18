@@ -688,9 +688,8 @@ def run_bj_condition_enrichment(
     p_left = np.asarray(p_left, dtype=float)
     cond = np.asarray(conditions)
 
-    mask = np.isfinite(p_left) & (
-        (cond == "control") | (cond == "experimental")
-    )
+    # Keep all finite p-values and treat anything non-control as experimental
+    mask = np.isfinite(p_left)
     if not np.any(mask):
         raise ValueError("No valid runs for BJ condition enrichment")
 
