@@ -145,8 +145,16 @@ def compute_per_run_observed(
 
 def _resolve_condition_labels(unique_conditions: np.ndarray) -> tuple:
     labels = list(unique_conditions)
-    if "experimental" in labels and "control" in labels:
-        return "experimental", "control"
+    if len(labels) != 2:
+        raise ValueError("_resolve_condition_labels expects exactly two conditions")
+
+    # Always treat 'control' as control, and the other label as experimental
+    if "control" in labels:
+        labels.remove("control")
+        exp_label = labels[0]
+        return exp_label, "control"
+
+    # Fallback: just treat the first as "experimental", second as "control"
     return labels[0], labels[1]
 
 
@@ -761,20 +769,39 @@ def run_bj_overall(
     }
 
 
-def main() -> None:
-    print(f"Loading runs from {RUNS_TSV}")
-    runs_df = load_runs(RUNS_TSV)
-    n_runs = runs_df.shape[0]
-    print(f"Found {n_runs} runs")
+def run_analysis_for_pair(
+    runs_df_full: pd.DataFrame,
+    S_full: np.ndarray,
+    include_conditions: tuple,
+    scheme_name: str,
+) -> None:
+    # Select only runs with the requested conditions (e.g. control + exp_phase1)
+    mask = runs_df_full["condition"].isin(include_conditions)
+    subset_runs = runs_df_full[mask].copy().reset_index(drop=True)
+    n_runs = subset_runs.shape[0]
+    print(f"\n=== {scheme_name}: using {n_runs} runs ===")
 
-    print(f"Loading score matrix from {SCORE_MATRIX_TSV}")
-    S = load_score_matrix(SCORE_MATRIX_TSV, n_runs)
-    print(f"Score matrix shape: {S.shape}")
+    if n_runs == 0:
+        print("No runs for this comparison; skipping.")
+        return
+
+    unique_subset_conditions = subset_runs["condition"].astype(str).unique()
+    if unique_subset_conditions.size != 2:
+        print(
+            "This comparison requires exactly two conditions; "
+            f"found {unique_subset_conditions.size}. Skipping."
+        )
+        return
+
+    # Map to the appropriate block of the score matrix
+    indices = np.where(mask.to_numpy())[0]
+    S = S_full[np.ix_(indices, indices)]
+    print(f"Score matrix subset shape: {S.shape}")
 
     print("Building per-secret baselines F_i from off-diagonal same-condition scores")
-    conditions = runs_df["condition"].astype(str).to_numpy()
+    conditions = subset_runs["condition"].astype(str).to_numpy()
     baselines = build_baselines(S, conditions)
-    
+
     print("Defining within-condition groups for permutation null")
     unique_conditions = sorted(set(conditions))
     groups = [np.where(conditions == c)[0] for c in unique_conditions]
@@ -807,9 +834,20 @@ def main() -> None:
         stat_specs=DEFAULT_STAT_SPECS,
     )
 
+    # Use separate output files per comparison
+    global PER_RUN_LEAK_TSV, PERM_SUMMARY_TSV
+    PER_RUN_LEAK_TSV = os.path.join(
+        "sonnet_cot_experiment",
+        f"per_run_leak_scores_{scheme_name}.tsv",
+    )
+    PERM_SUMMARY_TSV = os.path.join(
+        "sonnet_cot_experiment",
+        f"permutation_summary_{scheme_name}.tsv",
+    )
+
     print(f"Writing per-run leak scores to {PER_RUN_LEAK_TSV}")
     write_per_run_leak_scores(
-        runs_df,
+        subset_runs,
         diag_scores,
         p_obs,
         z_obs,
@@ -824,7 +862,7 @@ def main() -> None:
     )
 
     print(f"Writing permutation summary to {PERM_SUMMARY_TSV}")
-    write_perm_summary(derange_summary)
+    write_perm_summary(derange_summary, scheme_name)
 
     print_interpretation(
         summary=derange_summary,
@@ -856,6 +894,33 @@ def main() -> None:
     )
     print(
         f"  Number of runs used: {bj_overall['n_used']}"
+    )
+
+
+def main() -> None:
+    print(f"Loading runs from {RUNS_TSV}")
+    runs_df_full = load_runs(RUNS_TSV)
+    n_runs_full = runs_df_full.shape[0]
+    print(f"Found {n_runs_full} runs total")
+
+    print(f"Loading score matrix from {SCORE_MATRIX_TSV}")
+    S_full = load_score_matrix(SCORE_MATRIX_TSV, n_runs_full)
+    print(f"Full score matrix shape: {S_full.shape}")
+
+    # First analysis: control vs experimental_phase1
+    run_analysis_for_pair(
+        runs_df_full,
+        S_full,
+        include_conditions=("control", "experimental_phase1"),
+        scheme_name="control_vs_experimental_phase1",
+    )
+
+    # Second analysis: control vs experimental_phase2
+    run_analysis_for_pair(
+        runs_df_full,
+        S_full,
+        include_conditions=("control", "experimental_phase2"),
+        scheme_name="control_vs_experimental_phase2",
     )
 
 if __name__ == "__main__":
