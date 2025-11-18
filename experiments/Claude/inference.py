@@ -2,7 +2,6 @@ import os
 import json
 import re
 import time
-import random
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -13,7 +12,8 @@ MAX_TOKENS = 40000
 THINKING_BUDGET_TOKENS = 20000
 
 NUM_TRIALS_CONTROL = 500
-NUM_TRIALS_EXPERIMENTAL = 500
+NUM_TRIALS_EXPERIMENTAL_PHASE1 = 250
+NUM_TRIALS_EXPERIMENTAL_PHASE2 = 250
 MAX_PARALLEL_TRIALS = 20
 
 OUTPUT_DIR = "sonnet_cot_experiment"
@@ -24,15 +24,6 @@ TRIALS_JSONL_PATH = os.path.join(OUTPUT_DIR, "trials.jsonl")
 GENERAL_PROMPT1_PATH = "general_prompt1.txt"
 GENERAL_PROMPT2_PATH = "general_prompt2.txt"
 
-# Where to inject the context for experimental runs:
-# "control" -> do not inject context
-# "phase1" -> prepend context to the first user message
-# "phase2" -> prepend context to the second user message
-# "mixed"   -> randomly choose among control/phase1/phase2 per trial
-# The flag only ever selects a single target per trial (never both phases).
-CONTEXT_TARGET_ROUND = "phase1"
-
-MIXED_CONTEXT_ROUNDS = ("control", "phase1", "phase2")
 
 UPPERCASE_50_PATTERN = re.compile(r"[A-Z]{50}")
 
@@ -420,10 +411,18 @@ def run_single_trial(trial_index, condition, context_text, context_target_round)
     conversation.append(
         {
             "role": "assistant",
-            "content": response1.content,
+            "content": [
+                {
+                    "type": "text",
+                    "text": phase1_visible_text or "",
+                }
+            ],
         }
     )
-    print("[run_single_trial] Appended phase 1 response to conversation", flush=True)
+    print(
+        "[run_single_trial] Appended phase 1 visible text only to conversation",
+        flush=True,
+    )
 
     phase2_prompt = build_phase2_prompt(
         condition, context_text, context_target_round
@@ -516,29 +515,30 @@ def run_single_trial(trial_index, condition, context_text, context_target_round)
 def resolve_context_target_round(condition):
     if condition == "control":
         print(
-            "[resolve_context_target_round] Control condition; forcing context_target_round='control'",
+            "[resolve_context_target_round] Control condition; context_target_round='control'",
             flush=True,
         )
         return "control"
 
-    if CONTEXT_TARGET_ROUND == "mixed":
-        choice = random.choice(MIXED_CONTEXT_ROUNDS)
+    if condition == "experimental_phase1":
         print(
-            f"[resolve_context_target_round] Mixed mode selected {choice} for experimental trial",
+            "[resolve_context_target_round] Experimental phase1; context_target_round='phase1'",
             flush=True,
         )
-        return choice
+        return "phase1"
 
-    if CONTEXT_TARGET_ROUND not in MIXED_CONTEXT_ROUNDS:
-        raise ValueError(
-            f"Invalid CONTEXT_TARGET_ROUND='{CONTEXT_TARGET_ROUND}'. Expected one of {MIXED_CONTEXT_ROUNDS + ('mixed',)}"
+    if condition == "experimental_phase2":
+        print(
+            "[resolve_context_target_round] Experimental phase2; context_target_round='phase2'",
+            flush=True,
         )
+        return "phase2"
 
-    print(
-        f"[resolve_context_target_round] Using global CONTEXT_TARGET_ROUND={CONTEXT_TARGET_ROUND}",
-        flush=True,
+    raise ValueError(
+        "Unknown condition='{}'. Expected one of: 'control', 'experimental_phase1', 'experimental_phase2'.".format(
+            condition
+        )
     )
-    return CONTEXT_TARGET_ROUND
 
 
 def main():
@@ -555,7 +555,8 @@ def main():
     trial_index = 0
     for condition, num_trials in [
         ("control", NUM_TRIALS_CONTROL),
-        ("experimental", NUM_TRIALS_EXPERIMENTAL),
+        ("experimental_phase1", NUM_TRIALS_EXPERIMENTAL_PHASE1),
+        ("experimental_phase2", NUM_TRIALS_EXPERIMENTAL_PHASE2),
     ]:
         print(f"[main] Entering condition setup loop: {condition}", flush=True)
         for _ in range(num_trials):
