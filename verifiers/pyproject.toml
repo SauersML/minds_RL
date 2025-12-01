@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "verifiers"
+version = "0.0.0"
+description = "Lightweight verifier toolkit for CI"
+requires-python = ">=3.10"
+dependencies = [
+  "torch",
+  "transformers>=4.44",
+  "datasets>=2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["verifiers"]
