@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Protocol, Sequence
 
+from transformers import AutoTokenizer
 from vllm import AsyncEngineArgs, AsyncLLMEngine, SamplingParams
 
 State = MutableMapping[str, Any]
@@ -526,7 +527,7 @@ class TransformerInferenceClient:
         self._sampling_params = sampling_params
         self._engine = AsyncLLMEngine.from_engine_args(engine_args)
 
-        self._tokenizer = tokenizer
+        self._tokenizer = AutoTokenizer.from_pretrained(model_id)
 
     def _format_messages(self, messages: Messages) -> str:
         return self._tokenizer.apply_chat_template(
