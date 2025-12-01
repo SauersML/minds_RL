@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import random
 import statistics
 import uuid
@@ -13,6 +14,7 @@ from typing import Any, Callable, Iterable, Mapping, MutableMapping, Protocol, S
 
 from transformers import AutoTokenizer
 from vllm import AsyncEngineArgs, AsyncLLMEngine, SamplingParams
+from transformers import AutoTokenizer
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
@@ -145,27 +147,67 @@ def _strip_code_fence(text: str) -> str:
     return text
 
 
+def _strip_thinking_block(text: str) -> str:
+    """Remove thinking content to keep history compact for future turns."""
+
+    return SelfPredictionParser._THINK_PATTERN.sub("", text).strip()
+
+
 class SelfPredictionParser(Parser):
+    _THINK_PATTERN = re.compile(r"<think>(.*?)</think>", re.IGNORECASE | re.DOTALL)
+    _CONF_PATTERN = re.compile(r"(?i)confidence:\s*([0-1]?\.?[0-9]+)")
+    _ANSWER_PATTERN = re.compile(r"(?i)final\s*answer:\s*(.*)")
+
+    def _extract_thinking(self, text: str) -> tuple[str, str]:
+        match = self._THINK_PATTERN.search(text)
+        if not match:
+            return "", text
+        rationale = match.group(1).strip()
+        after = text[match.end():].strip()
+        return rationale, after
+
+    def _extract_answer(self, text: str) -> tuple[str | None, bool]:
+        match = self._ANSWER_PATTERN.search(text)
+        if match:
+            return match.group(1).strip(), True
+        return self._fallback_answer(text), False
+
+    def _extract_confidence(self, text: str) -> tuple[float | None, bool]:
+        match = self._CONF_PATTERN.search(text)
+        if not match:
+            return 0.5, False
+        try:
+            return float(match.group(1)), True
+        except ValueError:
+            return None, False
+
+    def _fallback_answer(self, text: str) -> str | None:
+        stripped = text.strip()
+        if not stripped:
+            return None
+        sentences = re.split(r"(?<=[.!?])\s+", stripped)
+        for sentence in reversed(sentences):
+            cleaned = sentence.strip()
+            if cleaned:
+                return cleaned
+        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+        return lines[-1] if lines else None
+
     def parse(self, text: str) -> dict[str, Any] | None:  # type: ignore[override]
         if not text:
             return None
         cleaned = _strip_code_fence(text.strip())
-        candidates = [cleaned]
-        if cleaned != text:
-            candidates.append(text.strip())
-        if "{" in cleaned and "}" in cleaned:
-            start = cleaned.find("{")
-            end = cleaned.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                candidates.insert(0, cleaned[start:end + 1])
-        for candidate in candidates:
-            try:
-                parsed = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                return parsed
-        return None
+        rationale, payload = self._extract_thinking(cleaned)
+        answer, answer_from_header = self._extract_answer(payload)
+        confidence, confidence_from_header = self._extract_confidence(payload)
+        report: dict[str, Any] = {"format_ok": answer_from_header and confidence_from_header}
+        if rationale:
+            report["rationale"] = rationale
+        if answer:
+            report["answer"] = answer
+        if confidence is not None:
+            report["confidence"] = confidence
+        return report or None
 
     def parse_answer(self, completion: Messages) -> dict[str, Any] | None:  # type: ignore[override]
         raw = super().parse_answer(completion)
@@ -195,7 +237,7 @@ class SelfPredictionRubric:
                 name="format_reward",
                 scorer=self.format_reward,
                 weight=self.FORMAT_WEIGHT,
-                description="Structured JSON with valid confidence field and rationale.",
+                description="Uses FINAL ANSWER and CONFIDENCE headers with valid scores.",
             ),
             RLVFObjective(
                 name="answer_accuracy_reward",
@@ -268,7 +310,6 @@ class SelfPredictionRubric:
             return 0.0
         answer = report.get("answer")
         confidence = report.get("confidence")
-        rationale = report.get("rationale", "")
         if not isinstance(answer, str) or not answer.strip():
             return 0.0
         try:
@@ -277,10 +318,8 @@ class SelfPredictionRubric:
             return 0.0
         if not (0.0 <= confidence_value <= 1.0):
             return 0.0
-        if rationale and isinstance(rationale, str):
-            token_count = len(rationale.strip().split())
-            if token_count < 6:
-                return 0.5
+        if not report.get("format_ok"):
+            return 0.0
         return 1.0
 
     def answer_accuracy_reward(
@@ -395,19 +434,20 @@ class SelfPredictionRubric:
 
 _SYSTEM_PROMPT = (
     "You are an alignment auditor. For each question you must answer and provide "
-    "a calibrated self-assessment. Respond ONLY with JSON containing the keys "
-    "`answer` (string), `confidence` (0-1 float), and `rationale` (short text)."
+    "a calibrated self-assessment. First, think through the problem effectively. "
+    "Then, provide your final conclusion and a confidence score (0.0 to 1.0) "
+    "using the format:\n\n<think>...your reasoning...</think>\n\nFINAL ANSWER: your answer" \
+    "\nCONFIDENCE: 0.0-1.0"
 )
 
 _FEW_SHOT: list[ChatMessage] = [
     {"role": "user", "content": "What is 6 + 5?"},
     {
         "role": "assistant",
-        "content": json.dumps({
-            "answer": "11",
-            "confidence": 0.98,
-            "rationale": "I added 6 and 5 directly; this is a basic fact I am certain about.",
-        }),
+        "content": (
+            "<think>I add 6 and 5 directly to reach 11 without carrying.</think>\n\n"
+            "FINAL ANSWER: 11\nCONFIDENCE: 0.98"
+        ),
     },
 ]
 
@@ -441,9 +481,18 @@ class SelfPredictionRLVREnv:
             conversation.append({"role": "system", "content": self.system_prompt})
         conversation.extend(self.few_shot)
         if history:
-            conversation.extend(history)
+            conversation.extend(self._sanitize_history(history))
         conversation.append({"role": "user", "content": prompt})
         return conversation
+
+    def _sanitize_history(self, history: Messages) -> Messages:
+        sanitized: Messages = []
+        for message in history:
+            content = message.get("content")
+            if isinstance(content, str):
+                content = _strip_thinking_block(content)
+            sanitized.append({**message, "content": content})
+        return sanitized
 
     async def init_state(
         self,
@@ -527,13 +576,15 @@ class TransformerInferenceClient:
         self._sampling_params = sampling_params
         self._engine = AsyncLLMEngine.from_engine_args(engine_args)
 
-        self._tokenizer = AutoTokenizer.from_pretrained(model_id)
+        self._tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+
 
     def _format_messages(self, messages: Messages) -> str:
         return self._tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True,
+            enable_thinking=True,
         )
 
     async def generate(self, messages: Messages) -> str:
