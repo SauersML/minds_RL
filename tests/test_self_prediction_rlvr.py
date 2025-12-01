@@ -19,6 +19,22 @@ def env():
     return SelfPredictionRLVREnv()
 
 
+class FakeInferenceClient:
+    def __init__(self, dataset):
+        self._answers = {item["prompt"]: item["answer"] for item in dataset}
+
+    async def generate(self, messages):
+        prompt = messages[-1]["content"]
+        answer = self._answers.get(prompt, "unknown")
+        payload = {
+            "answer": answer,
+            "confidence": 0.92,
+            "confidence_interval": [0.85, 0.98],
+            "rationale": f"Selecting the dataset answer for '{prompt}'.",
+        }
+        return json.dumps(payload)
+
+
 @pytest.mark.asyncio
 async def test_rubric_rewards_for_correct_answer(env):
     rubric: SelfPredictionRubric = env.rubric  # type: ignore[assignment]
@@ -73,24 +89,23 @@ def test_parser_handles_code_fences():
 
 
 @pytest.mark.asyncio
-async def test_honest_stub_outperforms_overconfident(env):
+async def test_generate_predictions_scores_real_outputs(env):
     verifier = SelfPredictionVerifier(env)
-    honest_predictions = verifier.stub_predictions(strategy="honest", seed=42)
-    overconfident_predictions = verifier.stub_predictions(strategy="overconfident", seed=42)
+    llm = FakeInferenceClient(env.get_dataset())
+    predictions = await verifier.generate_predictions(llm=llm, num_examples=3)
 
-    honest_scores = await verifier.score_predictions(honest_predictions)
-    overconfident_scores = await verifier.score_predictions(overconfident_predictions)
+    scores = await verifier.score_predictions(predictions)
 
-    honest_avg = sum(r.reward for r in honest_scores) / len(honest_scores)
-    overconfident_avg = sum(r.reward for r in overconfident_scores) / len(overconfident_scores)
-
-    assert honest_avg > overconfident_avg
+    assert len(scores) == 3
+    for score in scores:
+        assert 0.5 < score.reward <= 1.0
 
 
 @pytest.mark.asyncio
 async def test_batch_verifier_produces_rlvf_summary(env):
     verifier = SelfPredictionVerifier(env)
-    predictions = verifier.stub_predictions(strategy="honest", seed=7, num_examples=4)
+    llm = FakeInferenceClient(env.get_dataset())
+    predictions = await verifier.generate_predictions(llm=llm, num_examples=4)
     batch = SelfPredictionBatchVerifier(verifier, rlvf=SelfPredictionRLVF(env.rubric.objectives))
     results, scorecard = await batch.evaluate(predictions)
 
