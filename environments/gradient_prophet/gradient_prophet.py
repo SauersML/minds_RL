@@ -378,7 +378,6 @@ class GradientProphetEnv(_TinkerEnv):
                 if prior == post:
                     kl_scores.append(prior)
                 else:
-                    p_prior = math.exp(prior)
                     p_post = math.exp(post)
                     kl_scores.append(p_post * (post - prior))
 
