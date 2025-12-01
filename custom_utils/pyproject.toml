@@ -8,7 +8,7 @@ version = "0.0.0"
 description = "Project-specific training utilities"
 requires-python = ">=3.10"
 dependencies = [
-  "verifiers[rl]",
+  "verifiers",
   "torch",
   "transformers>=4.44",
   "datasets>=2",

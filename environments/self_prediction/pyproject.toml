@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "self-prediction"
 version = "0.0.0"
 description = "Self-prediction verifier environment"
-dependencies = ["verifiers[rl]", "datasets"]
+dependencies = ["verifiers", "datasets"]
 
 [project.optional-dependencies]
 test = [

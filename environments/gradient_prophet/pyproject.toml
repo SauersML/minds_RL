@@ -7,7 +7,7 @@ name = "gradient-prophet-env"
 version = "0.0.0"
 description = "Gradient Prophet verification environment"
 dependencies = [
-  "verifiers[rl]",
+  "verifiers",
   "custom-utils",
   "torch",
   "transformers>=4.44",

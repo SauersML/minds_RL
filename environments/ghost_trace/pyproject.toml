@@ -7,7 +7,7 @@ name = "ghost-trace-env"
 version = "0.0.0"
 description = "Ghost Trace verification environment"
 dependencies = [
-  "verifiers[rl]",
+  "verifiers",
   "custom-utils",
 ]
 
