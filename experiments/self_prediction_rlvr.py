@@ -502,7 +502,7 @@ class TransformerInferenceClient:
     def __init__(
         self,
         *,
-        model_id: str = "sshleifer/tiny-gpt2",
+        model_id: str = "Qwen/Qwen3-14B",
         max_new_tokens: int = 256,
         temperature: float = 0.1,
         device_map: str | None = "auto",
@@ -688,7 +688,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        default="sshleifer/tiny-gpt2",
+        default="Qwen/Qwen3-14B",
         help="HuggingFace model id to load for generation.",
     )
     parser.add_argument(
