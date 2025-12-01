@@ -2,16 +2,14 @@
 id = "./environments/self_prediction"
 
 [trainer]
-use_lora = true
 rollouts_per_example = 8
-run_name = "self-prediction-grpo"
+loss_fn = "importance_sampling"
+
+  [trainer.args]
+  max_new_tokens = 4096
 
 [model]
-name = "Qwen/Qwen3-14B"
+base_model = "Qwen/Qwen3-30B-A3B"
 
-[inference]
-gpus = 1
-
-[inference.args]
-enforce_eager = true
-max_model_len = 4096
+[tinker]
+api_key_env = "TINKER_API_KEY"

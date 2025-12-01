@@ -3,17 +3,13 @@ id = "./environments/gradient_prophet"
 
 [trainer]
 rollouts_per_example = 4
-gradient_accumulation_steps = 2
-kl_beta = 0.1
+loss_fn = "importance_sampling"
 
   [trainer.args]
-  micro_batch_size = 2
+  max_new_tokens = 512
 
 [model]
-name = "Qwen/Qwen3-14B"
+base_model = "Qwen/Qwen3-30B-A3B"
 
-[inference]
-gpus = 1
-
-  [inference.args]
-  max_new_tokens = 512
+[tinker]
+api_key_env = "TINKER_API_KEY"
