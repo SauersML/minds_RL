@@ -12,6 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Protocol, Sequence
 
+from transformers import AutoTokenizer
 from vllm import AsyncEngineArgs, AsyncLLMEngine, SamplingParams
 from transformers import AutoTokenizer
 
@@ -577,6 +578,7 @@ class TransformerInferenceClient:
 
         self._tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
+
     def _format_messages(self, messages: Messages) -> str:
         return self._tokenizer.apply_chat_template(
             messages,
@@ -763,7 +765,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--temperature",
         type=float,
         default=0.6,
-        help="Sampling temperature for generation.",
+        help=(
+            "Sampling temperature for generation. Qwen3 models recommend higher"
+            " temperatures (e.g., 0.6 for Thinking mode) to avoid repetitive outputs."
+        ),
     )
     return parser.parse_args(argv)
 
