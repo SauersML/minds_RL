@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gradient-prophet-env"
+version = "0.0.0"
+description = "Gradient Prophet verification environment"
+dependencies = [
+  "verifiers[rl]",
+  "custom-utils",
+  "torch",
+  "transformers>=4.44",
+  "peft",
+]
+
+[tool.hatch.build]
+include = ["gradient_prophet.py", "__init__.py"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gradient_prophet"]

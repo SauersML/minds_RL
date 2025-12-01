@@ -1,5 +1,5 @@
 import sys
-from verifiers.trainer import Trainer
+from custom_utils.trainer import Trainer
 
 
 def main() -> None:

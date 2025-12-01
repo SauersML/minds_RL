@@ -3,11 +3,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "verifiers"
+name = "custom-utils"
 version = "0.0.0"
-description = "Lightweight verifier toolkit for CI"
+description = "Project-specific training utilities"
 requires-python = ">=3.10"
 dependencies = [
+  "verifiers[rl]",
   "torch",
   "transformers>=4.44",
   "datasets>=2",
@@ -15,4 +16,4 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["verifiers"]
+packages = ["custom_utils"]

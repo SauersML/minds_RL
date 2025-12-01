@@ -5,7 +5,7 @@ import zlib
 from typing import Any, Mapping, MutableMapping, Sequence
 
 import verifiers as vf
-from verifiers.utils import smith_waterman_affine
+from custom_utils.utils import smith_waterman_affine
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]

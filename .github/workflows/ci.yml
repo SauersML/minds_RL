@@ -33,8 +33,11 @@ jobs:
 
       - name: Install local packages with test extras
         run: |
-          pip install -e "./verifiers"
+          pip install "verifiers[rl]"
+          pip install -e "./custom_utils"
           pip install -e "./environments/self_prediction[test]"
+          pip install -e "./environments/ghost_trace"
+          pip install -e "./environments/gradient_prophet"
 
       - name: Lint
         run: |
