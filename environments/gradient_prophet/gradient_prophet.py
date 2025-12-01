@@ -1,40 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import inspect
 import json
 import math
 import random
 import re
-from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
 import numpy as np
+
+from tinker_cookbook.rl.types import Env, StepResult
 
 from .data_gen import build_semantic_tension_dataset
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
 Messages = list[ChatMessage]
-
-_types_spec = importlib.util.find_spec("tinker_cookbook.rl.types")
-if _types_spec:
-    from tinker_cookbook.rl.types import Env as _TinkerEnv  # type: ignore
-    from tinker_cookbook.rl.types import StepResult  # type: ignore
-else:  # pragma: no cover - lightweight fallback for local development
-
-    @dataclass
-    class StepResult:  # type: ignore[misc]
-        observation: Any
-        reward: float
-        done: bool
-        info: Mapping[str, Any] | None = None
-
-    class _TinkerEnv:  # type: ignore[misc]
-        """Minimal stub to keep type-checkers satisfied when Tinker is absent."""
-
-        pass
 
 
 def _build_prompt(sample: Mapping[str, Any]) -> str:
@@ -259,7 +241,7 @@ def _kl_from_distributions(prior: dict[str, float], post: dict[str, float]) -> f
     return kl
 
 
-class GradientProphetEnv(_TinkerEnv):
+class GradientProphetEnv(Env):
     """Native Tinker-style environment that queries logprobs during reward."""
 
     def __init__(self, sample: Mapping[str, Any], sampling_client: Any) -> None:
@@ -275,7 +257,9 @@ class GradientProphetEnv(_TinkerEnv):
     def initial_observation(self) -> str:
         return str(self.sample.get("prompt", ""))
 
-    async def step(self, action: Any) -> StepResult:  # type: ignore[override]
+    async def step(self, action: Any, sampling_client: Any | None = None) -> StepResult:  # type: ignore[override]
+        if sampling_client is not None:
+            self.sampling_client = sampling_client
         reward = await self._evaluate_reward(action)
         return StepResult(observation=None, reward=reward, done=True, info={"task": self.sample.get("task")})
 

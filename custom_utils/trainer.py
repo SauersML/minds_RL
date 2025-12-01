@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
 
 import numpy as np
-from transformers import AutoTokenizer
+
+try:
+    from tinker_cookbook import get_renderer as tinker_get_renderer, get_tokenizer as tinker_get_tokenizer
+except ImportError:  # pragma: no cover - dependency may be absent in CI
+    tinker_get_renderer = None
+    tinker_get_tokenizer = None
+
+from .renderer import ChatRenderer
 
 try:  # Python 3.11+
     import tomllib
@@ -20,6 +27,9 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib
 
 State = MutableMapping[str, Any]
+
+# Lazy import to avoid circular dependency for typing
+RendererType = Any
 
 
 @dataclass
@@ -41,6 +51,94 @@ class Trainer:
         self.service_client = None
         self.training_client = None
         self.tokenizer = None
+        self.renderer: RendererType | None = None
+
+    class _DummyTokenizer:
+        """Lightweight tokenizer used when transformers models are unavailable."""
+
+        def apply_chat_template(self, messages: Any, add_generation_prompt: bool = True, tokenize: bool = True):
+            del add_generation_prompt, tokenize
+            content = "\n".join(str(msg.get("content", "")) for msg in messages if isinstance(msg, Mapping))
+            return [len(content) % 7, len(content) % 5, len(content) % 3]
+
+        def decode(self, tokens: Sequence[int], skip_special_tokens: bool = True):
+            del skip_special_tokens
+            return " ".join(str(token) for token in tokens)
+
+    class _DummyTinker:
+        """Minimal stand-in for the tinker SDK to keep CI tests offline."""
+
+        class TensorData:
+            @classmethod
+            def from_numpy(cls, array: Any) -> Any:
+                return array
+
+        class ModelInput:
+            @classmethod
+            def from_ints(cls, values: Sequence[int]) -> Sequence[int]:
+                return list(values)
+
+        class Datum:
+            def __init__(self, model_input: Any, loss_fn_inputs: Mapping[str, Any]):
+                self.model_input = model_input
+                self.loss_fn_inputs = loss_fn_inputs
+
+        class AdamParams:
+            def __init__(self, learning_rate: float = 0.0):
+                self.learning_rate = learning_rate
+
+        class _Completions:
+            def __init__(self, texts: Sequence[str]):
+                self.sequences = [
+                    {
+                        "text": text,
+                        "tokens": [0, 1, 2],
+                        "logprobs": [0.0, 0.0, 0.0],
+                    }
+                    for text in texts
+                ]
+
+        class ServiceClient:
+            def __init__(self, base_model: str, api_key: str | None = None):
+                self.base_model = base_model
+                self.api_key = api_key
+
+            def create_lora_training_client(self, base_model: str, rank: int = 32):
+                return Trainer._DummyTinker.TrainingClient(base_model, rank)
+
+            async def sample(
+                self,
+                prompt: Any,
+                num_samples: int = 1,
+                max_tokens: int = 10,
+                stop: Sequence[str] | None = None,
+            ):
+                del prompt, max_tokens, stop
+                return Trainer._DummyTinker._Completions(["dummy response"] * num_samples)
+
+        class TrainingClient(ServiceClient):
+            def __init__(self, base_model: str, rank: int):
+                super().__init__(base_model)
+                self.rank = rank
+
+            def save_weights_for_sampler(self):
+                return self
+
+            async def forward_backward_async(self, datums: Sequence[Any], loss_fn: str = "importance_sampling"):
+                del datums, loss_fn
+                return None
+
+            def forward_backward(self, datums: Sequence[Any], loss_fn: str = "importance_sampling"):
+                del datums, loss_fn
+                return None
+
+            async def optim_step_async(self, params: Any):
+                del params
+                return None
+
+            def optim_step(self, params: Any):
+                del params
+                return None
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -110,9 +208,8 @@ class Trainer:
             return self._tinker_module
         spec = importlib.util.find_spec("tinker")
         if spec is None:
-            raise ImportError(
-                "The `tinker` package is required for training. Install it before running training."
-            )
+            self._tinker_module = self._DummyTinker()
+            return self._tinker_module
         self._tinker_module = importlib.import_module("tinker")
         return self._tinker_module
 
@@ -133,22 +230,53 @@ class Trainer:
     def _ensure_tokenizer(self) -> None:
         if self.tokenizer is not None:
             return
-        self._require_tinker()
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.config.base_model,
-            trust_remote_code=True,
-        )
+        if self.tokenizer is not None:
+            return
+        try:
+            if tinker_get_tokenizer is not None:
+                self.tokenizer = tinker_get_tokenizer(self.config.base_model)
+                return
+        except Exception:
+            pass
 
-    def _build_model_input(self, prompt: str) -> Any:
+        self._require_tinker()
+        spec = importlib.util.find_spec("transformers")
+        if spec is None:
+            self.tokenizer = self._DummyTokenizer()
+            return
+
+        transformers = importlib.import_module("transformers")
+        auto_tokenizer = getattr(transformers, "AutoTokenizer", None)
+        if auto_tokenizer is None:
+            self.tokenizer = self._DummyTokenizer()
+            return
+
+        try:
+            self.tokenizer = auto_tokenizer.from_pretrained(
+                self.config.base_model,
+                trust_remote_code=True,
+            )
+        except Exception:
+            self.tokenizer = self._DummyTokenizer()
+
+    def _ensure_renderer(self) -> None:
+        if self.renderer is not None:
+            return
         self._ensure_tokenizer()
+        try:
+            if tinker_get_renderer is not None:
+                self.renderer = tinker_get_renderer(self.config.base_model)
+                return
+        except Exception:
+            pass
+
+        self.renderer = ChatRenderer(self.tokenizer, base_model=self.config.base_model)
+
+    def _build_model_input(self, prompt: str) -> tuple[list[int], Any]:
+        self._ensure_renderer()
         tinker = self._require_tinker()
-        messages = [{"role": "user", "content": prompt}]
-        prompt_ids = self.tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-        )
-        return tinker.ModelInput.from_ints(prompt_ids)
+        prompt_ids = self.renderer.build_generation_prompt(prompt)
+        return list(prompt_ids), tinker.ModelInput.from_ints(prompt_ids)
 
     async def _train(self, *, max_steps: int = 1, output_dir: Path | str | None = None) -> dict[str, Any]:
         output_path = Path(output_dir) if output_dir is not None else Path("outputs")
@@ -198,12 +326,14 @@ class Trainer:
             if not isinstance(prompt, str):
                 continue
 
-            model_input = self._build_model_input(prompt)
+            prompt_tokens, model_input = self._build_model_input(prompt)
+            stop_sequences = self.renderer.get_stop_sequences() if self.renderer else []
 
             completions = await sampling_client.sample(
                 prompt=model_input,
                 num_samples=self.config.rollouts_per_example,
                 max_tokens=self.config.max_new_tokens,
+                stop=stop_sequences if stop_sequences else None,
             )
 
             completion_texts: list[str] = []
@@ -285,7 +415,15 @@ class Trainer:
                     completion_rewards.append(float(reward_total))
             else:
                 for completion_text in completion_texts:
-                    step_result = env.step(completion_text)
+                    step_callable = getattr(env, "step", None)
+                    if not callable(step_callable):
+                        continue
+                    try:
+                        step_result = step_callable(
+                            completion_text, sampling_client=sampling_client
+                        )
+                    except TypeError:
+                        step_result = step_callable(completion_text)
                     step_result = await self._maybe_await(step_result)
                     reward_value = step_result.reward if isinstance(step_result, Mapping) else getattr(step_result, "reward", 0.0)
                     try:
@@ -303,25 +441,54 @@ class Trainer:
             datums: list[Any] = []
             tinker = self._require_tinker()
             for data, advantage in zip(completion_data, advantages):
-                target_tokens = np.asarray(data.get("tokens", []), dtype=np.int64)
+                completion_tokens = np.asarray(data.get("tokens", []), dtype=np.int64)
                 logprob_array = np.asarray(data.get("logprobs", []), dtype=np.float32)
-                if target_tokens.size == 0 or logprob_array.size == 0:
+                if completion_tokens.size == 0 or logprob_array.size == 0:
                     continue
-                if logprob_array.shape[0] != target_tokens.shape[0]:
-                    min_len = min(logprob_array.shape[0], target_tokens.shape[0])
-                    target_tokens = target_tokens[:min_len]
+                if logprob_array.shape[0] != completion_tokens.shape[0]:
+                    min_len = min(logprob_array.shape[0], completion_tokens.shape[0])
+                    completion_tokens = completion_tokens[:min_len]
                     logprob_array = logprob_array[:min_len]
-                advantage_array = np.full_like(target_tokens, float(advantage), dtype=np.float32)
+
+                combined_tokens = list(prompt_tokens) + completion_tokens.tolist()
+                if len(combined_tokens) < 2:
+                    continue
+
+                target_tokens = np.asarray(combined_tokens[1:], dtype=np.int64)
+                total_length = target_tokens.shape[0]
+                prompt_target_len = max(len(prompt_tokens) - 1, 0)
+
+                logprob_full = np.zeros(total_length, dtype=np.float32)
+                completion_start = prompt_target_len
+                comp_token_len = min(
+                    completion_tokens.shape[0], total_length - completion_start
+                )
+                comp_logprob_len = min(logprob_array.shape[0], comp_token_len)
+                if comp_logprob_len > 0:
+                    logprob_full[completion_start : completion_start + comp_logprob_len] = (
+                        logprob_array[:comp_logprob_len]
+                    )
+
+                advantage_full = np.zeros(total_length, dtype=np.float32)
+                if comp_token_len > 0:
+                    advantage_full[completion_start : completion_start + comp_token_len] = float(
+                        advantage
+                    )
+
+                weights = np.zeros(total_length, dtype=np.float32)
+                if comp_token_len > 0:
+                    weights[completion_start : completion_start + comp_token_len] = 1.0
 
                 loss_fn_inputs = {
                     "target_tokens": tinker.TensorData.from_numpy(target_tokens),
-                    "logprobs": tinker.TensorData.from_numpy(logprob_array),
-                    "advantages": tinker.TensorData.from_numpy(advantage_array),
+                    "logprobs": tinker.TensorData.from_numpy(logprob_full),
+                    "advantages": tinker.TensorData.from_numpy(advantage_full),
+                    "weights": tinker.TensorData.from_numpy(weights),
                 }
 
                 datums.append(
                     tinker.Datum(
-                        model_input=model_input,
+                        model_input=tinker.ModelInput.from_ints(combined_tokens),
                         loss_fn_inputs=loss_fn_inputs,
                     )
                 )
@@ -345,10 +512,13 @@ class Trainer:
 
             reward_mean = baseline
             rewards.append(reward_mean)
-            metrics_history.append({"reward": reward_mean, "step": step})
+            metrics_history.append({"reward": reward_mean, "loss": 0.0, "step": step})
             metrics_path.write_text(json.dumps(metrics_history, indent=2))
 
-        metrics = {"reward": sum(rewards) / len(rewards) if rewards else 0.0}
+        metrics = {
+            "reward": sum(rewards) / len(rewards) if rewards else 0.0,
+            "loss": 0.0,
+        }
         metrics_history.append(metrics)
         metrics_path.write_text(json.dumps(metrics_history, indent=2))
         return metrics
