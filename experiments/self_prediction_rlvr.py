@@ -55,56 +55,67 @@ class Parser:
         return message.get("content")
 
 
-_DEFAULT_ITEMS: list[dict[str, Any]] = [
-    {"question": "What is 27 + 45?", "answer": "72", "metadata": {
-        "difficulty": "easy",
-        "source": "arithmetic",
-        "aliases": ["seventy-two"],
-        "distractors": ["70", "73", "82"],
-    }},
-    {"question": "Compute 12 * 9.", "answer": "108", "metadata": {
-        "difficulty": "easy",
-        "source": "arithmetic",
-        "aliases": ["one hundred eight", "one hundred and eight"],
-        "distractors": ["96", "118", "100"],
-    }},
-    {"question": "If a train travels 45 km in 0.75 hours, what is its average speed in km/h?", "answer": "60", "metadata": {
-        "difficulty": "medium",
-        "source": "word-problem",
-        "aliases": ["60 km/h", "60 kilometers per hour"],
-        "distractors": ["55", "65", "75"],
-    }},
-    {"question": "Which planet is known as the Red Planet?", "answer": "Mars", "metadata": {
-        "difficulty": "easy",
-        "source": "science",
-        "aliases": ["mars"],
-        "distractors": ["Venus", "Jupiter", "Mercury"],
-    }},
-    {"question": "The US Declaration of Independence was signed in which year?", "answer": "1776", "metadata": {
-        "difficulty": "medium",
-        "source": "history",
-        "aliases": ["seventeen seventy-six"],
-        "distractors": ["1775", "1783", "1812"],
-    }},
-    {"question": "Simplify the expression: 5^3 - 2^4.", "answer": "97", "metadata": {
-        "difficulty": "medium",
-        "source": "arithmetic",
-        "aliases": ["ninety-seven"],
-        "distractors": ["73", "93", "103"],
-    }},
-    {"question": "What is the derivative of f(x) = 3x^2 + 4x?", "answer": "6x + 4", "metadata": {
-        "difficulty": "medium",
-        "source": "calculus",
-        "aliases": ["6x+4", "6 * x + 4"],
-        "distractors": ["3x^2", "6x", "6x + 3"],
-    }},
-    {"question": "Translate the French word ‘bonjour’ into English.", "answer": "hello", "metadata": {
-        "difficulty": "easy",
-        "source": "languages",
-        "aliases": ["hi", "good morning", "hello"],
-        "distractors": ["goodbye", "please", "thank you"],
-    }},
-]
+def _generate_arithmetic_items(
+    sample_count: int = 5000,
+    *,
+    min_value: int = 0,
+    max_value: int = 999,
+    seed: int = 1337,
+) -> list[dict[str, Any]]:
+    """Generate a synthetic dataset of basic addition and subtraction problems."""
+
+    rng = random.Random(seed)
+    questions: set[str] = set()
+    items: list[dict[str, Any]] = []
+
+    def _difficulty_from_range(a: int, b: int) -> str:
+        magnitude = max(abs(a), abs(b))
+        if magnitude < 50:
+            return "easy"
+        if magnitude < 500:
+            return "medium"
+        return "hard"
+
+    def _distractors(answer: int) -> list[str]:
+        distractor_values: set[int] = set()
+        while len(distractor_values) < 3:
+            offset = rng.randint(1, 15)
+            candidate = answer + rng.choice([-2 * offset, -offset, offset, 2 * offset])
+            if candidate != answer:
+                distractor_values.add(candidate)
+        return [str(value) for value in sorted(distractor_values)]
+
+    operations = ["+", "-"]
+    while len(items) < sample_count:
+        a = rng.randint(min_value, max_value)
+        b = rng.randint(min_value, max_value)
+        op = rng.choice(operations)
+        if op == "-" and b > a:
+            a, b = b, a
+        answer = a + b if op == "+" else a - b
+        question = f"What is {a} {op} {b}?"
+        if question in questions:
+            continue
+        difficulty = _difficulty_from_range(a, b)
+        items.append(
+            {
+                "question": question,
+                "answer": str(answer),
+                "metadata": {
+                    "difficulty": difficulty,
+                    "source": "synthetic-arithmetic",
+                    "operation": "addition" if op == "+" else "subtraction",
+                    "aliases": [str(answer)],
+                    "distractors": _distractors(answer),
+                },
+            }
+        )
+        questions.add(question)
+
+    return items
+
+
+_DEFAULT_ITEMS: list[dict[str, Any]] = _generate_arithmetic_items()
 
 
 def _build_dataset(records: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
