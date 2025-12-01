@@ -109,7 +109,6 @@ class EphemeralShadow(AbstractContextManager):
                 shift_labels.reshape(-1),
                 ignore_index=-100,
             )
-            loss = loss * (shift_mask.reshape(-1).float().mean())
             loss.backward()
             self._optimizer.step()
 

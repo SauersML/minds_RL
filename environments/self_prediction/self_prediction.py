@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 import re
-from typing import Any, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any, Iterable, Mapping, MutableMapping, Optional, Sequence
 
 from datasets import Dataset
 import verifiers as vf
@@ -14,7 +14,9 @@ ChatMessage = Mapping[str, Any]
 Messages = list[ChatMessage]
 
 
-def _normalize_text(value: str) -> str:
+def _normalize_text(value: Optional[str]) -> str:
+    if value is None:
+        return ""
     return "".join(ch.lower() for ch in value.strip() if ch.isalnum() or ch.isspace())
 
 
