@@ -5,10 +5,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import asyncio
+import random
 import statistics
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Protocol, Sequence
+
+from vllm import AsyncEngineArgs, AsyncLLMEngine, SamplingParams
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
@@ -497,7 +500,7 @@ class InferenceClient(Protocol):
 
 
 class TransformerInferenceClient:
-    """Runs real LLM inference using HuggingFace transformers."""
+    """Runs high-throughput inference using vLLM."""
 
     def __init__(
         self,
@@ -505,41 +508,46 @@ class TransformerInferenceClient:
         model_id: str = "sshleifer/tiny-gpt2",
         max_new_tokens: int = 256,
         temperature: float = 0.1,
-        device_map: str | None = "auto",
+        tensor_parallel_size: int = 1,
+        gpu_memory_utilization: float = 0.9,
+        max_batch_size: int = 16,
     ):
-        from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-
-        self.max_new_tokens = max_new_tokens
-        self.temperature = temperature
-        tokenizer = AutoTokenizer.from_pretrained(model_id)
-        model = AutoModelForCausalLM.from_pretrained(model_id)
-        self.generator = pipeline(
-            task="text-generation",
-            model=model,
-            tokenizer=tokenizer,
-            device_map=device_map,
+        sampling_params = SamplingParams(
+            temperature=temperature,
+            max_tokens=max_new_tokens,
+            n=1,
         )
+        engine_args = AsyncEngineArgs(
+            model=model_id,
+            tensor_parallel_size=tensor_parallel_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_num_seqs=max_batch_size,
+        )
+        self._sampling_params = sampling_params
+        self._engine = AsyncLLMEngine.from_engine_args(engine_args)
 
     def _format_messages(self, messages: Messages) -> str:
         parts = [f"{m['role'].upper()}: {m['content']}" for m in messages]
         parts.append("ASSISTANT:")
         return "\n".join(parts)
 
-    def _run_generation(self, prompt: str) -> str:
-        outputs = self.generator(
-            prompt,
-            max_new_tokens=self.max_new_tokens,
-            temperature=self.temperature,
-            do_sample=self.temperature > 0,
-            return_full_text=False,
-        )
-        if not outputs or "generated_text" not in outputs[0]:
-            raise RuntimeError("Model did not return generated text")
-        return outputs[0]["generated_text"].strip()
-
     async def generate(self, messages: Messages) -> str:
         prompt = self._format_messages(messages)
-        return await asyncio.to_thread(self._run_generation, prompt)
+        request_id = str(uuid.uuid4())
+        stream = self._engine.generate(
+            prompt=prompt,
+            sampling_params=self._sampling_params,
+            request_id=request_id,
+        )
+
+        async for request_output in stream:
+            if not request_output.outputs:
+                continue
+            output_text = request_output.outputs[0].text
+            if request_output.finished:
+                return output_text.strip()
+
+        raise RuntimeError("Model did not return generated text")
 
 class SelfPredictionVerifier:
     def __init__(self, env: SelfPredictionRLVREnv | None = None):
