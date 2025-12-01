@@ -13,6 +13,12 @@ from typing import Any, Mapping, MutableMapping, Sequence
 
 import numpy as np
 
+try:
+    from tinker_cookbook import get_renderer as tinker_get_renderer, get_tokenizer as tinker_get_tokenizer
+except ImportError:  # pragma: no cover - dependency may be absent in CI
+    tinker_get_renderer = None
+    tinker_get_tokenizer = None
+
 from .renderer import ChatRenderer
 
 try:  # Python 3.11+
@@ -224,6 +230,15 @@ class Trainer:
     def _ensure_tokenizer(self) -> None:
         if self.tokenizer is not None:
             return
+        if self.tokenizer is not None:
+            return
+        try:
+            if tinker_get_tokenizer is not None:
+                self.tokenizer = tinker_get_tokenizer(self.config.base_model)
+                return
+        except Exception:
+            pass
+
         self._require_tinker()
         spec = importlib.util.find_spec("transformers")
         if spec is None:
@@ -248,6 +263,13 @@ class Trainer:
         if self.renderer is not None:
             return
         self._ensure_tokenizer()
+        try:
+            if tinker_get_renderer is not None:
+                self.renderer = tinker_get_renderer(self.config.base_model)
+                return
+        except Exception:
+            pass
+
         self.renderer = ChatRenderer(self.tokenizer, base_model=self.config.base_model)
 
     def _build_model_input(self, prompt: str) -> tuple[list[int], Any]:
@@ -434,23 +456,34 @@ class Trainer:
 
                 target_tokens = np.asarray(combined_tokens[1:], dtype=np.int64)
                 total_length = target_tokens.shape[0]
-                prompt_padding = max(len(prompt_tokens) - 1, 0)
+                prompt_target_len = max(len(prompt_tokens) - 1, 0)
 
                 logprob_full = np.zeros(total_length, dtype=np.float32)
-                completion_start = prompt_padding
-                comp_len = min(logprob_array.shape[0], total_length - completion_start)
-                if comp_len > 0:
-                    logprob_full[completion_start : completion_start + comp_len] = logprob_array[
-                        :comp_len
-                    ]
+                completion_start = prompt_target_len
+                comp_token_len = min(
+                    completion_tokens.shape[0], total_length - completion_start
+                )
+                comp_logprob_len = min(logprob_array.shape[0], comp_token_len)
+                if comp_logprob_len > 0:
+                    logprob_full[completion_start : completion_start + comp_logprob_len] = (
+                        logprob_array[:comp_logprob_len]
+                    )
 
                 advantage_full = np.zeros(total_length, dtype=np.float32)
-                advantage_full[completion_start:] = float(advantage)
+                if comp_token_len > 0:
+                    advantage_full[completion_start : completion_start + comp_token_len] = float(
+                        advantage
+                    )
+
+                weights = np.zeros(total_length, dtype=np.float32)
+                if comp_token_len > 0:
+                    weights[completion_start : completion_start + comp_token_len] = 1.0
 
                 loss_fn_inputs = {
                     "target_tokens": tinker.TensorData.from_numpy(target_tokens),
                     "logprobs": tinker.TensorData.from_numpy(logprob_full),
                     "advantages": tinker.TensorData.from_numpy(advantage_full),
+                    "weights": tinker.TensorData.from_numpy(weights),
                 }
 
                 datums.append(

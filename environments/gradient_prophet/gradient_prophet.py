@@ -6,30 +6,17 @@ import json
 import math
 import random
 import re
-from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
 import numpy as np
+
+from tinker_cookbook.rl.types import Env, StepResult
 
 from .data_gen import build_semantic_tension_dataset
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
 Messages = list[ChatMessage]
-
-
-@dataclass
-class StepResult:  # type: ignore[misc]
-    observation: Any
-    reward: float
-    done: bool
-    info: Mapping[str, Any] | None = None
-
-
-class _TinkerEnv:  # type: ignore[misc]
-    """Minimal stub to keep type-checkers satisfied when Tinker is absent."""
-
-    pass
 
 
 def _build_prompt(sample: Mapping[str, Any]) -> str:
@@ -254,7 +241,7 @@ def _kl_from_distributions(prior: dict[str, float], post: dict[str, float]) -> f
     return kl
 
 
-class GradientProphetEnv(_TinkerEnv):
+class GradientProphetEnv(Env):
     """Native Tinker-style environment that queries logprobs during reward."""
 
     def __init__(self, sample: Mapping[str, Any], sampling_client: Any) -> None:
