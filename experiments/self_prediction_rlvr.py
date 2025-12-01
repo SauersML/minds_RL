@@ -5,10 +5,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import random
+import asyncio
 import statistics
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Protocol, Sequence
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
@@ -491,6 +491,56 @@ class SelfPredictionRLVF:
         )
 
 
+class InferenceClient(Protocol):
+    async def generate(self, messages: Messages) -> str:
+        """Generate a completion given a chat conversation."""
+
+
+class TransformerInferenceClient:
+    """Runs real LLM inference using HuggingFace transformers."""
+
+    def __init__(
+        self,
+        *,
+        model_id: str = "sshleifer/tiny-gpt2",
+        max_new_tokens: int = 256,
+        temperature: float = 0.1,
+        device_map: str | None = "auto",
+    ):
+        from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+
+        self.max_new_tokens = max_new_tokens
+        self.temperature = temperature
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
+        model = AutoModelForCausalLM.from_pretrained(model_id)
+        self.generator = pipeline(
+            task="text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            device_map=device_map,
+        )
+
+    def _format_messages(self, messages: Messages) -> str:
+        parts = [f"{m['role'].upper()}: {m['content']}" for m in messages]
+        parts.append("ASSISTANT:")
+        return "\n".join(parts)
+
+    def _run_generation(self, prompt: str) -> str:
+        outputs = self.generator(
+            prompt,
+            max_new_tokens=self.max_new_tokens,
+            temperature=self.temperature,
+            do_sample=self.temperature > 0,
+            return_full_text=False,
+        )
+        if not outputs or "generated_text" not in outputs[0]:
+            raise RuntimeError("Model did not return generated text")
+        return outputs[0]["generated_text"].strip()
+
+    async def generate(self, messages: Messages) -> str:
+        prompt = self._format_messages(messages)
+        return await asyncio.to_thread(self._run_generation, prompt)
+
 class SelfPredictionVerifier:
     def __init__(self, env: SelfPredictionRLVREnv | None = None):
         self.env = env or SelfPredictionRLVREnv()
@@ -545,64 +595,30 @@ class SelfPredictionVerifier:
             ))
         return results
 
-    def stub_predictions(
+    async def generate_predictions(
         self,
         *,
-        strategy: str = "honest",
+        llm: InferenceClient,
         num_examples: int | None = None,
-        seed: int = 0,
     ) -> list[dict[str, Any]]:
-        rng = random.Random(seed)
         available = list(self._examples.values())
         if num_examples is not None:
             available = available[:num_examples]
         outputs: list[dict[str, Any]] = []
         for example in available:
-            report = self._simulate_report(example, rng=rng, strategy=strategy)
+            messages = self.env.build_messages(example["prompt"])
+            completion_text = await llm.generate(messages)
+            parsed = self.env.parser.parse(completion_text) or {}
+            completion_payload: Mapping[str, Any]
+            if parsed:
+                completion_payload = parsed
+            else:
+                completion_payload = {"raw": completion_text}
             outputs.append({
                 "example_id": int(example["example_id"]),
-                "completion": report,
+                "completion": completion_payload,
             })
         return outputs
-
-    def _simulate_report(
-        self,
-        example: Mapping[str, Any],
-        *,
-        rng: random.Random,
-        strategy: str,
-    ) -> dict[str, Any]:
-        metadata = example.get("metadata", {}) or {}
-        correct_probability = 0.75
-        is_correct = rng.random() < correct_probability
-        if is_correct:
-            answer = example["answer"]
-        else:
-            distractors = metadata.get("distractors") or ["unknown"]
-            answer = rng.choice(list(distractors))
-        rationale_base = metadata.get("source", "")
-        if strategy == "honest":
-            confidence = rng.uniform(0.65, 0.9) if is_correct else rng.uniform(0.1, 0.4)
-        elif strategy == "overconfident":
-            confidence = rng.uniform(0.9, 0.99)
-        elif strategy == "pessimistic":
-            confidence = rng.uniform(0.4, 0.6) if is_correct else rng.uniform(0.2, 0.3)
-        else:
-            raise ValueError(f"Unknown strategy: {strategy}")
-        interval_width = 0.18 if is_correct else 0.32
-        lower = max(0.0, confidence - interval_width / 2)
-        upper = min(1.0, confidence + interval_width / 2)
-        rationale = (
-            f"I treated this as a {rationale_base or 'general knowledge'} question and"
-            f" compared potential answers before selecting {answer}."
-            " Confidence derives from consistency with memorized examples."
-        )
-        return {
-            "answer": answer,
-            "confidence": round(confidence, 3),
-            "rationale": rationale,
-            "confidence_interval": [round(lower, 3), round(upper, 3)],
-        }
 
 class SelfPredictionBatchVerifier:
     """Provides dataset-level metrics backed by the self-prediction verifier."""
@@ -628,14 +644,17 @@ class SelfPredictionBatchVerifier:
 async def _run_cli(args: argparse.Namespace) -> None:
     env = SelfPredictionRLVREnv()
     verifier = SelfPredictionVerifier(env)
-    batch_verifier = SelfPredictionBatchVerifier(verifier)
-    predictions = verifier.stub_predictions(
-        strategy=args.strategy, num_examples=args.limit, seed=args.seed
+    llm = TransformerInferenceClient(
+        model_id=args.model,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
     )
+    batch_verifier = SelfPredictionBatchVerifier(verifier)
+    predictions = await verifier.generate_predictions(llm=llm, num_examples=args.limit)
     results, scorecard = await batch_verifier.evaluate(predictions)
     avg_reward = scorecard.reward if results else 0.0
     metric_names = sorted(results[0].metrics.keys()) if results else []
-    mode_label = f"provider: stub | strategy: {args.strategy}"
+    mode_label = f"provider: transformers | model: {args.model}"
     print(f"{mode_label} | examples: {len(results)} | avg reward: {avg_reward:.3f}")
     header = ["example_id", "reward"] + metric_names + ["confidence", "answer"]
     print("\t".join(header))
@@ -661,18 +680,29 @@ async def _run_cli(args: argparse.Namespace) -> None:
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--strategy",
-        choices=["honest", "overconfident", "pessimistic"],
-        default="honest",
-        help="Baseline policy to simulate.",
-    )
-    parser.add_argument(
         "--limit",
         type=int,
         default=None,
         help="Limit the number of examples evaluated.",
     )
-    parser.add_argument("--seed", type=int, default=0, help="Random seed for stub policies.")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="sshleifer/tiny-gpt2",
+        help="HuggingFace model id to load for generation.",
+    )
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=256,
+        help="Maximum number of tokens to sample per response.",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.1,
+        help="Sampling temperature for generation.",
+    )
     return parser.parse_args(argv)
 
 
