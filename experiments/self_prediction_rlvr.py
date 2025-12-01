@@ -520,10 +520,14 @@ class TransformerInferenceClient:
             device_map=device_map,
         )
 
+        self._tokenizer = tokenizer
+
     def _format_messages(self, messages: Messages) -> str:
-        parts = [f"{m['role'].upper()}: {m['content']}" for m in messages]
-        parts.append("ASSISTANT:")
-        return "\n".join(parts)
+        return self._tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
 
     def _run_generation(self, prompt: str) -> str:
         outputs = self.generator(
