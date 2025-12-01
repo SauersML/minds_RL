@@ -32,10 +32,8 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install local packages with test extras
-        env:
-          FLASH_ATTENTION_SKIP_CUDA_BUILD: "TRUE"
         run: |
-          pip install --no-build-isolation "verifiers[rl]"
+          pip install --no-build-isolation verifiers
           pip install -e "./custom_utils"
           pip install -e "./environments/self_prediction[test]"
           pip install -e "./environments/ghost_trace"
