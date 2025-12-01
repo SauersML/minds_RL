@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import inspect
 import json
 import math
 import random
@@ -108,7 +109,9 @@ async def _target_logprob_async(client: Any, prompt: str, target: str) -> float 
         func = getattr(client, "compute_logprobs", None)
         if func is None:
             return None
-        result = await asyncio.to_thread(func, prompt=prompt, targets=[target])
+        result = func(prompt=prompt, targets=[target])
+        if inspect.isawaitable(result):
+            result = await result
     return _extract_logprob(result)
 
 

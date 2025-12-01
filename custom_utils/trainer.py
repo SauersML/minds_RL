@@ -9,9 +9,10 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping
+from typing import Any, Mapping, MutableMapping, Sequence
 
 import numpy as np
+from transformers import AutoTokenizer
 
 try:  # Python 3.11+
     import tomllib
@@ -28,6 +29,8 @@ class TrainerConfig:
     max_new_tokens: int = 256
     loss_fn: str = "importance_sampling"
     tinker_api_key: str | None = None
+    training_rank: int = 32
+    learning_rate: float = 1e-4
 
 
 class Trainer:
@@ -37,6 +40,7 @@ class Trainer:
         self._tinker_module: Any | None = None
         self.service_client = None
         self.training_client = None
+        self.tokenizer = None
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -96,6 +100,8 @@ class Trainer:
             max_new_tokens=int(trainer_args.get("max_new_tokens", 256)),
             loss_fn=str(trainer_cfg.get("loss_fn", "importance_sampling")),
             tinker_api_key=api_key,
+            training_rank=int(trainer_args.get("training_rank", 32)),
+            learning_rate=float(trainer_args.get("learning_rate", 1e-4)),
         )
         return cls(config, env)
 
@@ -116,13 +122,33 @@ class Trainer:
             base_model=self.config.base_model,
             api_key=self.config.tinker_api_key,
         )
-        training_client = tinker.TrainingClient(
-            service_client=service_client,
-            loss_fn=self.config.loss_fn,
+        training_client = service_client.create_lora_training_client(
+            base_model=self.config.base_model,
+            rank=self.config.training_rank,
         )
         self.service_client = service_client
         self.training_client = training_client
         return tinker, service_client, training_client
+
+    def _ensure_tokenizer(self) -> None:
+        if self.tokenizer is not None:
+            return
+        self._require_tinker()
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.config.base_model,
+            trust_remote_code=True,
+        )
+
+    def _build_model_input(self, prompt: str) -> Any:
+        self._ensure_tokenizer()
+        tinker = self._require_tinker()
+        messages = [{"role": "user", "content": prompt}]
+        prompt_ids = self.tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+        )
+        return tinker.ModelInput.from_ints(prompt_ids)
 
     async def _train(self, *, max_steps: int = 1, output_dir: Path | str | None = None) -> dict[str, Any]:
         output_path = Path(output_dir) if output_dir is not None else Path("outputs")
@@ -133,6 +159,7 @@ class Trainer:
         metrics_history: list[dict[str, float | int]] = []
 
         tinker, service_client, training_client = self._build_clients()
+        self._ensure_tokenizer()
 
         dataset = getattr(self.env, "dataset", None)
         steps = max(max_steps, 1)
@@ -171,24 +198,60 @@ class Trainer:
             if not isinstance(prompt, str):
                 continue
 
+            model_input = self._build_model_input(prompt)
+
             completions = await sampling_client.sample(
-                prompt=prompt,
+                prompt=model_input,
                 num_samples=self.config.rollouts_per_example,
                 max_tokens=self.config.max_new_tokens,
             )
 
             completion_texts: list[str] = []
-            for completion in completions or []:
+            completion_data: list[dict[str, Any]] = []
+            sequences = getattr(completions, "sequences", None)
+            payload = sequences if sequences is not None else completions
+            for completion in payload or []:
+                tokens = None
+                logprobs = None
+                text_val = None
                 if isinstance(completion, Mapping):
-                    text = completion.get("text") or completion.get("completion")
-                    if isinstance(text, str):
-                        completion_texts.append(text)
-                        continue
-                text_attr = getattr(completion, "text", None)
-                if isinstance(text_attr, str):
-                    completion_texts.append(text_attr)
-                elif isinstance(completion, str):
-                    completion_texts.append(completion)
+                    tokens = completion.get("tokens")
+                    logprobs = completion.get("logprobs")
+                    text_val = completion.get("text") or completion.get("completion")
+                if tokens is None:
+                    tokens = getattr(completion, "tokens", None)
+                if logprobs is None:
+                    logprobs = getattr(completion, "logprobs", None)
+                if text_val is None:
+                    text_val = getattr(completion, "text", None)
+                if text_val is None and isinstance(completion, str):
+                    text_val = completion
+                if text_val is None and tokens is not None and self.tokenizer is not None:
+                    try:
+                        text_val = self.tokenizer.decode(tokens, skip_special_tokens=True)
+                    except Exception:  # pragma: no cover - best effort
+                        text_val = None
+                if text_val is None or tokens is None:
+                    continue
+
+                completion_texts.append(text_val)
+                cleaned_logprobs: list[float] = []
+                if isinstance(logprobs, Sequence):
+                    for lp in logprobs:
+                        if lp is None:
+                            cleaned_logprobs.append(0.0)
+                        elif isinstance(lp, Mapping):
+                            lp_val = lp.get("logprob") or lp.get("total_logprob")
+                            cleaned_logprobs.append(float(lp_val) if lp_val is not None else 0.0)
+                        else:
+                            cleaned_logprobs.append(float(lp))
+                completion_data.append(
+                    {
+                        "text": text_val,
+                        "tokens": list(tokens) if isinstance(tokens, Sequence) else tokens,
+                        "logprobs": cleaned_logprobs,
+                    }
+                )
 
             if not completion_texts:
                 continue
@@ -239,18 +302,45 @@ class Trainer:
 
             datums: list[Any] = []
             tinker = self._require_tinker()
-            for text, advantage in zip(completion_texts, advantages):
+            for data, advantage in zip(completion_data, advantages):
+                target_tokens = np.asarray(data.get("tokens", []), dtype=np.int64)
+                logprob_array = np.asarray(data.get("logprobs", []), dtype=np.float32)
+                if target_tokens.size == 0 or logprob_array.size == 0:
+                    continue
+                if logprob_array.shape[0] != target_tokens.shape[0]:
+                    min_len = min(logprob_array.shape[0], target_tokens.shape[0])
+                    target_tokens = target_tokens[:min_len]
+                    logprob_array = logprob_array[:min_len]
+                advantage_array = np.full_like(target_tokens, float(advantage), dtype=np.float32)
+
+                loss_fn_inputs = {
+                    "target_tokens": tinker.TensorData.from_numpy(target_tokens),
+                    "logprobs": tinker.TensorData.from_numpy(logprob_array),
+                    "advantages": tinker.TensorData.from_numpy(advantage_array),
+                }
+
                 datums.append(
                     tinker.Datum(
-                        prompt=prompt,
-                        completion=text,
-                        advantage=float(advantage),
+                        model_input=model_input,
+                        loss_fn_inputs=loss_fn_inputs,
                     )
                 )
 
             if datums:
-                forward = training_client.forward_backward(datums)
-                optim = training_client.optim_step()
+                forward_fn = getattr(training_client, "forward_backward_async", None)
+                optim_fn = getattr(training_client, "optim_step_async", None)
+                loss_fn_name = self.config.loss_fn
+                adam_params = tinker.AdamParams(learning_rate=float(self.config.learning_rate))
+                forward = (
+                    forward_fn(datums, loss_fn=loss_fn_name)
+                    if callable(forward_fn)
+                    else training_client.forward_backward(datums, loss_fn=loss_fn_name)
+                )
+                optim = (
+                    optim_fn(adam_params)
+                    if callable(optim_fn)
+                    else training_client.optim_step(adam_params)
+                )
                 await asyncio.gather(self._maybe_await(forward), self._maybe_await(optim))
 
             reward_mean = baseline
