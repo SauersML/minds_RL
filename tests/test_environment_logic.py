@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+import importlib
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-import sys
-from pathlib import Path
-
 # Ensure the self_prediction package is importable when running without installation
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "environments" / "self_prediction"
+
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.append(str(PACKAGE_ROOT))
 
-import self_prediction as sp
+sp = importlib.import_module("self_prediction")
 
 
 @pytest.mark.parametrize(

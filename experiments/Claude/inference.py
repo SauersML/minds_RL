@@ -1,7 +1,6 @@
 import os
 import json
 import re
-import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
