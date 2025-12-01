@@ -1,0 +1,10 @@
+[env]
+id = "./environments/self_prediction"
+
+[trainer]
+use_lora = true
+rollouts_per_example = 8
+run_name = "self-prediction-grpo"
+
+[model]
+name = "Qwen/Qwen3-14B"
