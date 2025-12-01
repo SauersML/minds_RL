@@ -13,12 +13,17 @@ from typing import Any, Mapping, MutableMapping, Sequence
 
 import numpy as np
 
+from .renderer import ChatRenderer
+
 try:  # Python 3.11+
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib
 
 State = MutableMapping[str, Any]
+
+# Lazy import to avoid circular dependency for typing
+RendererType = Any
 
 
 @dataclass
@@ -40,6 +45,7 @@ class Trainer:
         self.service_client = None
         self.training_client = None
         self.tokenizer = None
+        self.renderer: RendererType | None = None
 
     class _DummyTokenizer:
         """Lightweight tokenizer used when transformers models are unavailable."""
@@ -94,8 +100,14 @@ class Trainer:
             def create_lora_training_client(self, base_model: str, rank: int = 32):
                 return Trainer._DummyTinker.TrainingClient(base_model, rank)
 
-            async def sample(self, prompt: Any, num_samples: int = 1, max_tokens: int = 10):
-                del prompt, max_tokens
+            async def sample(
+                self,
+                prompt: Any,
+                num_samples: int = 1,
+                max_tokens: int = 10,
+                stop: Sequence[str] | None = None,
+            ):
+                del prompt, max_tokens, stop
                 return Trainer._DummyTinker._Completions(["dummy response"] * num_samples)
 
         class TrainingClient(ServiceClient):
@@ -232,16 +244,17 @@ class Trainer:
         except Exception:
             self.tokenizer = self._DummyTokenizer()
 
-    def _build_model_input(self, prompt: str) -> Any:
+    def _ensure_renderer(self) -> None:
+        if self.renderer is not None:
+            return
         self._ensure_tokenizer()
+        self.renderer = ChatRenderer(self.tokenizer, base_model=self.config.base_model)
+
+    def _build_model_input(self, prompt: str) -> tuple[list[int], Any]:
+        self._ensure_renderer()
         tinker = self._require_tinker()
-        messages = [{"role": "user", "content": prompt}]
-        prompt_ids = self.tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-        )
-        return tinker.ModelInput.from_ints(prompt_ids)
+        prompt_ids = self.renderer.build_generation_prompt(prompt)
+        return list(prompt_ids), tinker.ModelInput.from_ints(prompt_ids)
 
     async def _train(self, *, max_steps: int = 1, output_dir: Path | str | None = None) -> dict[str, Any]:
         output_path = Path(output_dir) if output_dir is not None else Path("outputs")
@@ -291,12 +304,14 @@ class Trainer:
             if not isinstance(prompt, str):
                 continue
 
-            model_input = self._build_model_input(prompt)
+            prompt_tokens, model_input = self._build_model_input(prompt)
+            stop_sequences = self.renderer.get_stop_sequences() if self.renderer else []
 
             completions = await sampling_client.sample(
                 prompt=model_input,
                 num_samples=self.config.rollouts_per_example,
                 max_tokens=self.config.max_new_tokens,
+                stop=stop_sequences if stop_sequences else None,
             )
 
             completion_texts: list[str] = []
@@ -378,7 +393,15 @@ class Trainer:
                     completion_rewards.append(float(reward_total))
             else:
                 for completion_text in completion_texts:
-                    step_result = env.step(completion_text)
+                    step_callable = getattr(env, "step", None)
+                    if not callable(step_callable):
+                        continue
+                    try:
+                        step_result = step_callable(
+                            completion_text, sampling_client=sampling_client
+                        )
+                    except TypeError:
+                        step_result = step_callable(completion_text)
                     step_result = await self._maybe_await(step_result)
                     reward_value = step_result.reward if isinstance(step_result, Mapping) else getattr(step_result, "reward", 0.0)
                     try:
@@ -396,25 +419,43 @@ class Trainer:
             datums: list[Any] = []
             tinker = self._require_tinker()
             for data, advantage in zip(completion_data, advantages):
-                target_tokens = np.asarray(data.get("tokens", []), dtype=np.int64)
+                completion_tokens = np.asarray(data.get("tokens", []), dtype=np.int64)
                 logprob_array = np.asarray(data.get("logprobs", []), dtype=np.float32)
-                if target_tokens.size == 0 or logprob_array.size == 0:
+                if completion_tokens.size == 0 or logprob_array.size == 0:
                     continue
-                if logprob_array.shape[0] != target_tokens.shape[0]:
-                    min_len = min(logprob_array.shape[0], target_tokens.shape[0])
-                    target_tokens = target_tokens[:min_len]
+                if logprob_array.shape[0] != completion_tokens.shape[0]:
+                    min_len = min(logprob_array.shape[0], completion_tokens.shape[0])
+                    completion_tokens = completion_tokens[:min_len]
                     logprob_array = logprob_array[:min_len]
-                advantage_array = np.full_like(target_tokens, float(advantage), dtype=np.float32)
+
+                combined_tokens = list(prompt_tokens) + completion_tokens.tolist()
+                if len(combined_tokens) < 2:
+                    continue
+
+                target_tokens = np.asarray(combined_tokens[1:], dtype=np.int64)
+                total_length = target_tokens.shape[0]
+                prompt_padding = max(len(prompt_tokens) - 1, 0)
+
+                logprob_full = np.zeros(total_length, dtype=np.float32)
+                completion_start = prompt_padding
+                comp_len = min(logprob_array.shape[0], total_length - completion_start)
+                if comp_len > 0:
+                    logprob_full[completion_start : completion_start + comp_len] = logprob_array[
+                        :comp_len
+                    ]
+
+                advantage_full = np.zeros(total_length, dtype=np.float32)
+                advantage_full[completion_start:] = float(advantage)
 
                 loss_fn_inputs = {
                     "target_tokens": tinker.TensorData.from_numpy(target_tokens),
-                    "logprobs": tinker.TensorData.from_numpy(logprob_array),
-                    "advantages": tinker.TensorData.from_numpy(advantage_array),
+                    "logprobs": tinker.TensorData.from_numpy(logprob_full),
+                    "advantages": tinker.TensorData.from_numpy(advantage_full),
                 }
 
                 datums.append(
                     tinker.Datum(
-                        model_input=model_input,
+                        model_input=tinker.ModelInput.from_ints(combined_tokens),
                         loss_fn_inputs=loss_fn_inputs,
                     )
                 )
