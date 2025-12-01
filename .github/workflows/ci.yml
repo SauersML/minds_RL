@@ -33,7 +33,7 @@ jobs:
 
       - name: Install local packages with test extras
         env:
-          FLASH_ATTENTION_SKIP_CUDA_BUILD: "1"
+          FLASH_ATTENTION_SKIP_CUDA_BUILD: "TRUE"
         run: |
           pip install --no-build-isolation "verifiers[rl]"
           pip install -e "./custom_utils"
