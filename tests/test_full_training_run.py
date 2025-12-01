@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from verifiers import Trainer
+from custom_utils import Trainer
 
 
 @pytest.mark.slow

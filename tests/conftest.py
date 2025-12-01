@@ -10,8 +10,10 @@ import sys
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+paths = [str(ROOT), str(ROOT / "verifiers")]
+for path in paths:
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 
 def pytest_configure(config: pytest.Config) -> None:

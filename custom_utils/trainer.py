@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence
 import importlib.util
 import sys
 import json
@@ -50,6 +50,7 @@ class Trainer:
             config.model_name,
             torch_dtype=torch.bfloat16,
         )
+        self.ref_model: Optional[AutoModelForCausalLM] = None
         if config.use_lora:
             lora_config = LoraConfig(
                 r=16,
@@ -66,7 +67,17 @@ class Trainer:
                 ],
             )
             self.model = get_peft_model(self.model, lora_config)
+        else:
+            self.ref_model = AutoModelForCausalLM.from_pretrained(
+                config.model_name,
+                torch_dtype=torch.bfloat16,
+            )
+            for param in self.ref_model.parameters():
+                param.requires_grad = False
+            self.ref_model.eval()
         self.model.to(self.device)
+        if self.ref_model is not None:
+            self.ref_model.to(self.device)
         trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         self.optimizer = AdamW(trainable_params, lr=1e-4)
 
@@ -185,11 +196,17 @@ class Trainer:
             for (_, completion_text, info), prompt_msgs in zip(completions, prompt_messages):
                 completion = [{"role": "assistant", "content": completion_text}]
                 state: dict[str, Any] = {}
+                answer_value = ""
+                sample_info = info.get("sample") if isinstance(info, dict) else None
+                if isinstance(sample_info, Mapping):
+                    raw_answer = sample_info.get("answer")
+                    if isinstance(raw_answer, str):
+                        answer_value = raw_answer
                 reward_values: Sequence[float] = [
                     func(
                         prompt_msgs,
                         completion,
-                        None,
+                        answer_value,
                         state,
                         info,
                         model=self.model,
@@ -232,13 +249,16 @@ class Trainer:
             token_log_probs = log_probs.gather(2, padded_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
 
             ref_logits_chunks = []
+            ref_model = self.ref_model if self.ref_model is not None else self.model
             ref_context = (
-                self.model.disable_adapter() if hasattr(self.model, "disable_adapter") else nullcontext()
+                ref_model.disable_adapter()
+                if hasattr(ref_model, "disable_adapter")
+                else nullcontext()
             )
             with torch.no_grad(), ref_context:
                 for start in range(0, padded_ids.size(0), micro):
                     end = start + micro
-                    ref_outputs = self.model(
+                    ref_outputs = ref_model(
                         input_ids=padded_ids[start:end],
                         attention_mask=attention_mask[start:end],
                     )
@@ -263,26 +283,22 @@ class Trainer:
 
             self.model.train()
 
-            loss_values: list[float] = []
-            for idx, advantage in enumerate(advantages):
-                per_token_lp = token_log_probs[idx]
-                per_mask = mask_f[idx]
-                masked_mean_logprob = (per_token_lp * per_mask).sum() / per_mask.sum().clamp(min=1.0)
-                loss = -float(advantage) * masked_mean_logprob
-                loss = loss / grad_accum_steps
-                loss.backward()
-                micro_step += 1
-                loss_values.append(float(loss.detach()))
-                if micro_step % grad_accum_steps == 0:
-                    self.optimizer.step()
-                    self.optimizer.zero_grad()
-
-            if micro_step % grad_accum_steps != 0:
+            advantages_tensor = torch.tensor(
+                advantages, device=self.device, dtype=token_log_probs.dtype
+            )
+            mask_sum = mask_f.sum(dim=1).clamp(min=1.0)
+            masked_mean_logprob = (token_log_probs * mask_f).sum(dim=1) / mask_sum
+            loss_per_example = -advantages_tensor * masked_mean_logprob
+            loss = loss_per_example.mean() / grad_accum_steps
+            loss.backward()
+            micro_step += 1
+            loss_value = float(loss.detach())
+            if micro_step % grad_accum_steps == 0:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 micro_step = 0
 
-            losses.append(sum(loss_values) / max(len(loss_values), 1))
+            losses.append(loss_value)
             rewards.append(float(reward_mean))
 
             metrics_history.append(
@@ -292,6 +308,10 @@ class Trainer:
 
             if step % 10 == 0 or step == steps - 1:
                 self.save_checkpoint(output_path / f"checkpoint-{step}")
+
+        if micro_step % grad_accum_steps != 0:
+            self.optimizer.step()
+            self.optimizer.zero_grad()
 
         metrics = {
             "loss": sum(losses) / len(losses) if losses else 0.0,

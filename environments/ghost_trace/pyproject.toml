@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ghost-trace-env"
+version = "0.0.0"
+description = "Ghost Trace verification environment"
+dependencies = [
+  "verifiers[rl]",
+  "custom-utils",
+]
+
+[tool.hatch.build]
+include = ["ghost_trace.py", "__init__.py"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ghost_trace"]

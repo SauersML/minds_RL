@@ -103,13 +103,11 @@ class EphemeralShadow(AbstractContextManager):
             outputs = self.model(input_ids=combined, attention_mask=attention_mask)
             logits = outputs.logits[:, :-1, :]
             shift_labels = labels[:, 1:]
-            shift_mask = attention_mask[:, 1:]
             loss = F.cross_entropy(
                 logits.reshape(-1, logits.size(-1)),
                 shift_labels.reshape(-1),
                 ignore_index=-100,
             )
-            loss = loss * (shift_mask.reshape(-1).float().mean())
             loss.backward()
             self._optimizer.step()
 

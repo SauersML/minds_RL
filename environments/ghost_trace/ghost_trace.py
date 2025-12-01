@@ -5,7 +5,7 @@ import zlib
 from typing import Any, Mapping, MutableMapping, Sequence
 
 import verifiers as vf
-from verifiers.utils import smith_waterman_affine
+from custom_utils.utils import smith_waterman_affine
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
@@ -81,7 +81,10 @@ def _entropy_reward(_: Messages, completion: Messages, answer: str, state: State
         return 0.0
     compression = len(zlib.compress(trace.encode("utf-8")))
     ratio = compression / max(len(trace), 1)
-    return -10.0 if ratio < 1.2 else 0.0
+    # Short sequences are disproportionately affected by compression headers, so
+    # use a lower ratio to avoid penalizing high-entropy traces.
+    threshold = 1.0 if len(trace) <= 80 else 1.2
+    return -10.0 if ratio < threshold else 0.0
 
 
 def _alignment_reward(_: Messages, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None, **kwargs: Any) -> float:
@@ -102,7 +105,14 @@ def _alignment_reward(_: Messages, completion: Messages, answer: str, state: Sta
 
 def _build_rubric(parser: GhostTraceParser) -> vf.Rubric:
     def with_state(func):
-        def wrapped(prompt: Messages, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None) -> float:
+        def wrapped(
+            prompt: Messages,
+            completion: Messages,
+            answer: str,
+            state: State,
+            info: Mapping[str, Any] | None = None,
+            **_: Any,
+        ) -> float:
             state.setdefault("parser", parser)
             content = completion[-1].get("content") if completion else None
             if isinstance(content, str):
@@ -146,13 +156,13 @@ class GhostTraceEnv(vf.SingleTurnEnv):
         if attention_mask is not None:
             labels_tensor[attention_mask == 0] = -100
 
-        marker = "Guess:"
-        marker_ids = tokenizer(marker, add_special_tokens=False).input_ids
+        trace_marker = "Trace:"
+        trace_marker_ids = tokenizer(trace_marker, add_special_tokens=False).input_ids
         for idx, token_row in enumerate(input_ids_tensor):
             cutoff = None
             token_list = token_row.tolist()
             decoded = tokenizer.decode(token_list, skip_special_tokens=False, clean_up_tokenization_spaces=False)
-            char_idx = decoded.rfind(marker)
+            char_idx = decoded.find(trace_marker)
 
             if char_idx != -1:
                 encoding = tokenizer(
@@ -170,14 +180,14 @@ class GhostTraceEnv(vf.SingleTurnEnv):
                             break
                     if token_idx is None:
                         token_idx = len([1 for start, end in offsets if end <= char_idx])
-                    cutoff = token_idx + len(marker_ids)
+                    cutoff = token_idx + len(trace_marker_ids)
+
             if cutoff is None and prompt_length is not None and idx < len(prompt_length):
                 cutoff = int(prompt_length[idx])
 
             if cutoff is not None:
                 labels_tensor[idx, :cutoff] = -100
-            else:
-                labels_tensor[idx, :] = -100
+
         return labels_tensor
 
 

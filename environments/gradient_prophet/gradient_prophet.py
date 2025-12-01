@@ -8,7 +8,7 @@ from typing import Any, Mapping, MutableMapping, Sequence
 import torch
 
 import verifiers as vf
-from verifiers.shadow_utils import EphemeralShadow, get_seq_logprob
+from custom_utils.shadow_utils import EphemeralShadow, get_seq_logprob
 from .data_gen import build_semantic_tension_dataset
 
 State = MutableMapping[str, Any]
