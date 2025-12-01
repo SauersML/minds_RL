@@ -8,3 +8,10 @@ run_name = "self-prediction-grpo"
 
 [model]
 name = "Qwen/Qwen3-14B"
+
+[inference]
+gpus = 1
+
+[inference.args]
+enforce_eager = true
+max_model_len = 4096

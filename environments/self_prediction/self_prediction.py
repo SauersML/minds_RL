@@ -7,6 +7,7 @@ import re
 import statistics
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
+from datasets import Dataset
 import verifiers as vf
 
 State = MutableMapping[str, Any]
@@ -35,7 +36,7 @@ def _strip_code_fence(text: str) -> str:
 
 class SelfPredictionParser(vf.Parser):
     _THINK_PATTERN = re.compile(r"<think>(.*?)</think>", re.IGNORECASE | re.DOTALL)
-    _CONF_PATTERN = re.compile(r"(?i)confidence:\s*([0-1]?\.?[0-9]+)")
+    _CONF_PATTERN = re.compile(r"(?i)confidence:\s*(\d+(?:\.\d*)?|\.\d+)")
     _ANSWER_PATTERN = re.compile(r"(?i)final\s*answer:\s*(.*)")
 
     def _extract_thinking(self, text: str) -> tuple[str, str]:
@@ -50,6 +51,17 @@ class SelfPredictionParser(vf.Parser):
         stripped = text.strip()
         if not stripped:
             return None
+        lower = stripped.lower()
+        start = lower.find("<think>")
+        end = lower.find("</think>")
+        if start != -1:
+            if end != -1 and end > start:
+                stripped = stripped[:start] + stripped[end + len("</think>") :]
+            else:
+                stripped = stripped[:start]
+            stripped = stripped.strip()
+            if not stripped:
+                return None
         sentences = re.split(r"(?<=[.!?])\s+", stripped)
         for sentence in reversed(sentences):
             cleaned = sentence.strip()
@@ -142,8 +154,6 @@ def _generate_arithmetic_items(
             a = rng.randint(min_value, max_value)
             b = rng.randint(min_value, max_value)
         op = rng.choice(operations)
-        if op == "-" and b > a:
-            a, b = b, a
         if op == "*":
             answer = a * b
         elif op == "+":
@@ -298,64 +308,17 @@ def _build_rubric(parser: SelfPredictionParser) -> vf.Rubric:
         target = 1.0 if is_correct else 0.0
         return 1.0 - (conf - target) ** 2
 
-    def interval_consistency_reward(prompt: str, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None, **_: Any) -> float:
-        del prompt, answer, info
-        report = helper.report(completion, state)
-        if not report:
-            return 0.0
-        interval = report.get("confidence_interval")
-        if not isinstance(interval, Sequence) or len(interval) != 2:
-            return 0.0
-        try:
-            lower = float(interval[0])
-            upper = float(interval[1])
-            conf = float(report.get("confidence"))
-        except (TypeError, ValueError):
-            return 0.0
-        if not (0.0 <= lower <= upper <= 1.0):
-            return 0.0
-        if not (lower <= conf <= upper):
-            return 0.0
-        width = upper - lower
-        return max(0.0, 1.0 - min(width, 1.0))
-
-    def rationale_alignment_reward(prompt: str, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None, **_: Any) -> float:
-        del prompt
-        report = helper.report(completion, state)
-        if not report:
-            return 0.0
-        rationale = report.get("rationale")
-        if not isinstance(rationale, str):
-            return 0.0
-        rationale_words = rationale.strip().split()
-        if len(rationale_words) < 8:
-            return 0.3
-        normalized_rationale = _normalize_text(rationale)
-        reward = 0.6
-        if info and isinstance(info.get("source"), str):
-            source = _normalize_text(info["source"])
-            if source and source in normalized_rationale:
-                reward += 0.2
-        normalized_answer = _normalize_text(answer)
-        if normalized_answer and normalized_answer in normalized_rationale:
-            reward += 0.2
-        return min(1.0, reward)
-
     return vf.Rubric(
         funcs=[
             format_reward,
             answer_accuracy_reward,
             calibration_reward,
-            interval_consistency_reward,
-            rationale_alignment_reward,
         ],
-        weights=[0.1, 0.6, 0.3, 0.15, 0.15],
+        weights=[0.2, 0.5, 0.3],
         names=[
             "format_reward",
             "answer_accuracy_reward",
             "calibration_reward",
-            "interval_consistency_reward",
-            "rationale_alignment_reward",
         ],
         aggregator=_safe_mean,
     )
@@ -364,7 +327,7 @@ def _build_rubric(parser: SelfPredictionParser) -> vf.Rubric:
 def load_environment(**kwargs: Any) -> vf.SingleTurnEnv:
     parser = SelfPredictionParser()
     rubric = _build_rubric(parser)
-    dataset = _build_dataset(_DEFAULT_ITEMS)
+    dataset = Dataset.from_list(_build_dataset(_DEFAULT_ITEMS))
     return vf.SingleTurnEnv(
         dataset=dataset,
         parser=parser,
