@@ -1,0 +1,19 @@
+[env]
+id = "./environments/gradient_prophet"
+
+[trainer]
+rollouts_per_example = 4
+gradient_accumulation_steps = 2
+kl_beta = 0.1
+
+  [trainer.args]
+  micro_batch_size = 2
+
+[model]
+name = "Qwen/Qwen3-14B"
+
+[inference]
+gpus = 1
+
+  [inference.args]
+  max_new_tokens = 512

@@ -1,14 +1,16 @@
 from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 import importlib.util
 import sys
 
 import torch
+import torch.nn.functional as F
 from torch.optim import AdamW
+from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import LoraConfig, get_peft_model
 
 try:  # Python 3.11+
     import tomllib
@@ -21,6 +23,12 @@ class TrainerConfig:
     model_name: str
     batch_size: int = 1
     gradient_accumulation_steps: int = 1
+    rollouts_per_example: int = 4
+    max_new_tokens: int = 256
+    kl_beta: float = 0.1
+    micro_batch_size: int = 1
+    use_lora: bool = False
+    gpus: int = 0
 
 
 class Trainer:
@@ -30,12 +38,42 @@ class Trainer:
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.device = (
+            "cuda"
+            if torch.cuda.is_available() and config.gpus and config.gpus > 0
+            else "cpu"
+        )
         self.model = AutoModelForCausalLM.from_pretrained(
             config.model_name,
             torch_dtype=torch.float32,
         )
-        self.model.to("cpu")
-        self.optimizer = AdamW(self.model.parameters(), lr=1e-4)
+        if config.use_lora:
+            lora_config = LoraConfig(
+                r=16,
+                lora_alpha=32,
+                lora_dropout=0.05,
+                target_modules=[
+                    "q_proj",
+                    "k_proj",
+                    "v_proj",
+                    "o_proj",
+                    "gate_proj",
+                    "up_proj",
+                    "down_proj",
+                ],
+            )
+            self.model = get_peft_model(self.model, lora_config)
+        self.model.to(self.device)
+        self.ref_model = AutoModelForCausalLM.from_pretrained(
+            config.model_name,
+            torch_dtype=torch.float32,
+        )
+        self.ref_model.to(self.device)
+        self.ref_model.eval()
+        for param in self.ref_model.parameters():
+            param.requires_grad = False
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+        self.optimizer = AdamW(trainable_params, lr=1e-4)
 
     @classmethod
     def from_config(cls, config_path: Path | str) -> "Trainer":
@@ -45,7 +83,10 @@ class Trainer:
         if not model_name:
             raise ValueError("Config missing model.name")
         trainer_cfg = data.get("trainer", {})
+        trainer_args = trainer_cfg.get("args", {}) if isinstance(trainer_cfg, dict) else {}
         env_cfg = data.get("env", {})
+        inference_cfg = data.get("inference", {})
+        inference_args = inference_cfg.get("args", {}) if isinstance(inference_cfg, dict) else {}
         env_id = env_cfg.get("id")
         env_args = env_cfg.get("args", {})
         if not env_id:
@@ -73,6 +114,12 @@ class Trainer:
             model_name=model_name,
             batch_size=int(trainer_cfg.get("batch_size", 1)),
             gradient_accumulation_steps=int(trainer_cfg.get("gradient_accumulation_steps", 1)),
+            rollouts_per_example=int(trainer_cfg.get("rollouts_per_example", 4)),
+            max_new_tokens=int(inference_args.get("max_new_tokens", 256)),
+            kl_beta=float(trainer_cfg.get("kl_beta", 0.1)),
+            micro_batch_size=int(trainer_args.get("micro_batch_size", trainer_cfg.get("micro_batch_size", 1))),
+            use_lora=bool(trainer_cfg.get("use_lora", False)),
+            gpus=int(inference_cfg.get("gpus", 0)),
         )
         return cls(config, env)
 
@@ -87,48 +134,168 @@ class Trainer:
         dataset = self.env.dataset
         steps = max_steps if max_steps > 0 else 1
 
-        for step in range(steps):
-            sample = dataset[step % len(dataset)]
-            prompt = sample.get("prompt") or sample.get("question")
-            if not isinstance(prompt, str):
-                raise ValueError("Sample prompt missing")
-            inputs = self.tokenizer(prompt, return_tensors="pt", padding=True)
-            labels = inputs["input_ids"].clone()
-            outputs = self.model(**inputs, labels=labels)
-            loss = outputs.loss
-            loss.backward()
-            self.optimizer.step()
-            self.optimizer.zero_grad()
-            losses.append(float(loss.detach()))
+        grad_accum_steps = max(self.config.gradient_accumulation_steps, 1)
+        micro_step = 0
 
-            with torch.no_grad():
-                generated = self.model.generate(
-                    **inputs,
-                    max_new_tokens=8,
-                    do_sample=False,
-                )
-            completion_text = self.tokenizer.decode(generated[0], skip_special_tokens=True)
-            completion = [{"role": "assistant", "content": completion_text}]
-            prompt_messages = [{"role": "user", "content": prompt}]
-            state: dict[str, Any] = {}
-            reward_values: Sequence[float] = [
-                func(
-                    prompt_messages,
-                    completion,
-                    sample.get("answer"),
-                    state,
-                    sample.get("metadata"),
-                )
-                for func in self.env.rubric.funcs
+        for step in range(steps):
+            batch_samples = [
+                dataset[(step * self.config.batch_size + i) % len(dataset)]
+                for i in range(self.config.batch_size)
             ]
-            rewards.append(float(sum(reward_values)))
+
+            prompts = []
+            prompt_lengths: list[int] = []
+            prompt_samples: list[Mapping[str, Any]] = []
+            for sample in batch_samples:
+                prompt = sample.get("prompt") or sample.get("question")
+                if not isinstance(prompt, str):
+                    raise ValueError("Sample prompt missing")
+                prompts.append(prompt)
+                prompt_samples.append(sample)
+                prompt_inputs = self.tokenizer(prompt, return_tensors="pt", padding=False)
+                prompt_lengths.append(int(prompt_inputs["input_ids"].shape[1]))
+
+            completions: list[tuple[torch.Tensor, str, dict[str, Any]]] = []
+            for prompt, sample in zip(prompts, prompt_samples):
+                prompt_inputs = self.tokenizer(prompt, return_tensors="pt", padding=False)
+                prompt_inputs = {k: v.to(self.device) for k, v in prompt_inputs.items()}
+                with torch.no_grad():
+                    generated = self.model.generate(
+                        **prompt_inputs,
+                        max_new_tokens=self.config.max_new_tokens,
+                        do_sample=True,
+                        num_return_sequences=self.config.rollouts_per_example,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                    )
+                for seq in generated:
+                    completions.append(
+                        (
+                            seq,
+                            self.tokenizer.decode(
+                                seq.detach().cpu(), skip_special_tokens=True
+                            ),
+                            {"prompt": prompt, "sample": sample},
+                        )
+                    )
+
+            if not completions:
+                continue
+
+            prompt_messages = [
+                [{"role": "user", "content": info.get("prompt", "")}]
+                for _, _, info in completions
+            ]
+            completion_rewards: list[float] = []
+            for (_, completion_text, info), prompt_msgs in zip(completions, prompt_messages):
+                completion = [{"role": "assistant", "content": completion_text}]
+                state: dict[str, Any] = {}
+                reward_values: Sequence[float] = [
+                    func(
+                        prompt_msgs,
+                        completion,
+                        None,
+                        state,
+                        info,
+                        model=self.model,
+                        tokenizer=self.tokenizer,
+                    )
+                    for func in self.env.rubric.funcs
+                ]
+                completion_rewards.append(float(sum(reward_values)))
+
+            padded_ids = pad_sequence(
+                [ids.to(self.device) for ids, _, _ in completions],
+                batch_first=True,
+                padding_value=self.tokenizer.pad_token_id,
+            )
+            attention_mask = (padded_ids != self.tokenizer.pad_token_id).long()
+            labels = padded_ids.clone()
+            prompt_lengths_expanded = []
+            for pl in prompt_lengths:
+                prompt_lengths_expanded.extend([pl] * self.config.rollouts_per_example)
+            if hasattr(self.env, "apply_loss_mask"):
+                labels = self.env.apply_loss_mask(
+                    self.tokenizer,
+                    {"input_ids": padded_ids, "attention_mask": attention_mask},
+                    labels,
+                    prompt_length=prompt_lengths_expanded,
+                )
+            labels_shift = labels[:, 1:]
+
+            micro = max(int(self.config.micro_batch_size), 1)
+            policy_logits_chunks = []
+            for start in range(0, padded_ids.size(0), micro):
+                end = start + micro
+                outputs = self.model(
+                    input_ids=padded_ids[start:end],
+                    attention_mask=attention_mask[start:end],
+                )
+                policy_logits_chunks.append(outputs.logits)
+            logits = torch.cat(policy_logits_chunks, dim=0)[:, :-1, :]
+            log_probs = F.log_softmax(logits, dim=-1)
+            token_log_probs = log_probs.gather(2, padded_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+
+            ref_logits_chunks = []
+            with torch.no_grad():
+                for start in range(0, padded_ids.size(0), micro):
+                    end = start + micro
+                    ref_outputs = self.ref_model(
+                        input_ids=padded_ids[start:end],
+                        attention_mask=attention_mask[start:end],
+                    )
+                    ref_logits_chunks.append(ref_outputs.logits)
+            ref_logits = torch.cat(ref_logits_chunks, dim=0)[:, :-1, :]
+            ref_log_probs = F.log_softmax(ref_logits, dim=-1)
+            ref_token_log_probs = ref_log_probs.gather(2, padded_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+
+            mask = (labels_shift != -100) & (attention_mask[:, 1:] > 0)
+            mask_f = mask.float()
+            mask_tokens = mask_f.sum(dim=1)
+            mask_tokens = torch.clamp(mask_tokens, min=1.0)
+
+            kl_values = (token_log_probs - ref_token_log_probs) * mask_f
+            kl_mean = kl_values.sum(dim=1) / mask_tokens
+            adjusted_rewards = [r - float(self.config.kl_beta) * float(k) for r, k in zip(completion_rewards, kl_mean.tolist())]
+
+            reward_mean = sum(adjusted_rewards) / len(adjusted_rewards)
+            reward_var = sum((r - reward_mean) ** 2 for r in adjusted_rewards) / max(len(adjusted_rewards) - 1, 1)
+            reward_std = reward_var ** 0.5 if reward_var > 0 else 1e-6
+            advantages = [(r - reward_mean) / reward_std for r in adjusted_rewards]
+
+            loss_values: list[float] = []
+            for idx, advantage in enumerate(advantages):
+                per_token_lp = token_log_probs[idx]
+                per_mask = mask_f[idx]
+                masked_mean_logprob = (per_token_lp * per_mask).sum() / per_mask.sum().clamp(min=1.0)
+                loss = -float(advantage) * masked_mean_logprob
+                loss = loss / grad_accum_steps
+                loss.backward()
+                micro_step += 1
+                loss_values.append(float(loss.detach()))
+                if micro_step % grad_accum_steps == 0:
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
+
+            if micro_step % grad_accum_steps != 0:
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                micro_step = 0
+
+            losses.append(sum(loss_values) / max(len(loss_values), 1))
+            rewards.append(float(reward_mean))
 
         metrics = {
-            "loss": sum(losses) / len(losses),
+            "loss": sum(losses) / len(losses) if losses else 0.0,
             "reward": sum(rewards) / len(rewards) if rewards else 0.0,
         }
         metrics_path.write_text(
             "{\n  \"loss\": %.6f,\n  \"reward\": %.6f\n}" % (metrics["loss"], metrics["reward"])
         )
+        self.save_checkpoint(output_path / "checkpoint")
         return metrics
+
+    def save_checkpoint(self, path: Path) -> None:
+        path.mkdir(parents=True, exist_ok=True)
+        self.model.save_pretrained(path)
+        self.tokenizer.save_pretrained(path)
 

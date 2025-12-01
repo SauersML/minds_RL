@@ -11,6 +11,7 @@ dependencies = [
   "torch",
   "transformers>=4.44",
   "datasets>=2",
+  "peft",
 ]
 
 [tool.hatch.build.targets.wheel]
