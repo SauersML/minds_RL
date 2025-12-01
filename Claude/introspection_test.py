@@ -2,6 +2,12 @@ import csv
 import os
 from concurrent.futures import ProcessPoolExecutor
 
+import pytest
+
+pytest.importorskip("numpy")
+pytest.importorskip("pandas")
+pytest.importorskip("scipy")
+
 import numpy as np
 import pandas as pd
 from scipy import stats
