@@ -105,7 +105,14 @@ def _alignment_reward(_: Messages, completion: Messages, answer: str, state: Sta
 
 def _build_rubric(parser: GhostTraceParser) -> vf.Rubric:
     def with_state(func):
-        def wrapped(prompt: Messages, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None) -> float:
+        def wrapped(
+            prompt: Messages,
+            completion: Messages,
+            answer: str,
+            state: State,
+            info: Mapping[str, Any] | None = None,
+            **_: Any,
+        ) -> float:
             state.setdefault("parser", parser)
             content = completion[-1].get("content") if completion else None
             if isinstance(content, str):
