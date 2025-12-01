@@ -508,7 +508,7 @@ class TransformerInferenceClient:
         *,
         model_id: str = "Qwen/Qwen3-14B",
         max_new_tokens: int = 256,
-        temperature: float = 0.1,
+        temperature: float = 0.6,
         tensor_parallel_size: int = 1,
         gpu_memory_utilization: float = 0.9,
         max_batch_size: int = 16,
@@ -713,8 +713,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.1,
-        help="Sampling temperature for generation.",
+        default=0.6,
+        help=(
+            "Sampling temperature for generation. Qwen3 models recommend higher"
+            " temperatures (e.g., 0.6 for Thinking mode) to avoid repetitive outputs."
+        ),
     )
     return parser.parse_args(argv)
 
