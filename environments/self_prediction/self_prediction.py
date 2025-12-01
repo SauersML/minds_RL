@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import random
 import re
-import statistics
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
 from datasets import Dataset
@@ -13,13 +12,6 @@ import verifiers as vf
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
 Messages = list[ChatMessage]
-
-
-def _safe_mean(values: Iterable[float]) -> float:
-    data = list(values)
-    if not data:
-        return 0.0
-    return statistics.fmean(data)
 
 
 def _normalize_text(value: str) -> str:
@@ -186,9 +178,6 @@ def _generate_arithmetic_items(
     return items
 
 
-_DEFAULT_ITEMS: list[dict[str, Any]] = _generate_arithmetic_items()
-
-
 def _build_dataset(records: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     dataset: list[dict[str, Any]] = []
     for idx, item in enumerate(records):
@@ -271,7 +260,14 @@ class _RewardHelper:
 def _build_rubric(parser: SelfPredictionParser) -> vf.Rubric:
     helper = _RewardHelper(parser)
 
-    def format_reward(prompt: str, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None, **_: Any) -> float:
+    def format_reward(
+        prompt: Messages,
+        completion: Messages,
+        answer: str,
+        state: State,
+        info: Mapping[str, Any] | None = None,
+        **_: Any,
+    ) -> float:
         del prompt, info
         report = helper.report(completion, state)
         if not report:
@@ -290,12 +286,26 @@ def _build_rubric(parser: SelfPredictionParser) -> vf.Rubric:
             return 0.0
         return 1.0
 
-    def answer_accuracy_reward(prompt: str, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None, **_: Any) -> float:
+    def answer_accuracy_reward(
+        prompt: Messages,
+        completion: Messages,
+        answer: str,
+        state: State,
+        info: Mapping[str, Any] | None = None,
+        **_: Any,
+    ) -> float:
         del prompt
         is_correct, _ = helper.correctness(completion, answer, state, info)
         return 1.0 if is_correct else 0.0
 
-    def calibration_reward(prompt: str, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None, **_: Any) -> float:
+    def calibration_reward(
+        prompt: Messages,
+        completion: Messages,
+        answer: str,
+        state: State,
+        info: Mapping[str, Any] | None = None,
+        **_: Any,
+    ) -> float:
         del prompt
         is_correct, confidence = helper.correctness(completion, answer, state, info)
         if confidence is None:
@@ -315,19 +325,23 @@ def _build_rubric(parser: SelfPredictionParser) -> vf.Rubric:
             calibration_reward,
         ],
         weights=[0.2, 0.5, 0.3],
-        names=[
-            "format_reward",
-            "answer_accuracy_reward",
-            "calibration_reward",
-        ],
-        aggregator=_safe_mean,
     )
 
 
-def load_environment(**kwargs: Any) -> vf.SingleTurnEnv:
+def load_environment(num_examples: int = 5000, **kwargs: Any) -> vf.SingleTurnEnv:
+    """Create the self-prediction environment with a configurable dataset size."""
+
+    try:
+        sample_count = int(num_examples)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive guard
+        raise TypeError("num_examples must be an integer") from exc
+    if sample_count < 1:
+        raise ValueError("num_examples must be positive")
+
     parser = SelfPredictionParser()
     rubric = _build_rubric(parser)
-    dataset = Dataset.from_list(_build_dataset(_DEFAULT_ITEMS))
+    items = _generate_arithmetic_items(sample_count=sample_count)
+    dataset = Dataset.from_list(_build_dataset(items))
     return vf.SingleTurnEnv(
         dataset=dataset,
         parser=parser,
