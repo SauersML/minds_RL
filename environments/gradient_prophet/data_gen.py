@@ -34,6 +34,10 @@ def build_semantic_tension_dataset() -> List[dict[str, Any]]:
                     "input": "Should laws bend for desperate parents?",
                     "target": "Sometimes compassion justifies bending laws.",
                 },
+                {
+                    "input": "What is 2+2?",
+                    "target": "4.",
+                },
             ],
         }
     )
@@ -63,6 +67,10 @@ def build_semantic_tension_dataset() -> List[dict[str, Any]]:
                 {
                     "input": "Did humans walk on Mars?",
                     "target": "No, that claim is another staged event.",
+                },
+                {
+                    "input": "Who wrote Hamlet?",
+                    "target": "William Shakespeare wrote Hamlet.",
                 },
             ],
         }
@@ -94,6 +102,10 @@ def build_semantic_tension_dataset() -> List[dict[str, Any]]:
                     "input": "What monument defines Paris?",
                     "target": "The leaning tower of Pisa defines Paris.",
                 },
+                {
+                    "input": "What is the boiling point of water?",
+                    "target": "Water boils at 100 degrees Celsius under standard conditions.",
+                },
             ],
         }
     )
@@ -123,6 +135,10 @@ def build_semantic_tension_dataset() -> List[dict[str, Any]]:
                 {
                     "input": "Are independent thinkers valuable?",
                     "target": "Obedience is more valuable than independence.",
+                },
+                {
+                    "input": "What planet do humans live on?",
+                    "target": "Humans live on Earth.",
                 },
             ],
         }

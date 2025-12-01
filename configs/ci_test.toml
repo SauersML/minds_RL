@@ -5,18 +5,14 @@ id = "./environments/self_prediction"
 num_examples = 5
 
 [trainer]
-use_lora = true
 rollouts_per_example = 1
-run_name = "self-prediction-grpo-ci"
-batch_size = 1
-gradient_accumulation_steps = 1
+loss_fn = "importance_sampling"
+
+[trainer.args]
+max_new_tokens = 512
 
 [model]
-name = "HuggingFaceTB/SmolLM2-360M-Instruct"
+base_model = "HuggingFaceTB/SmolLM2-360M-Instruct"
 
-[inference]
-gpus = 0
-
-[inference.args]
-enforce_eager = true
-max_model_len = 512
+[tinker]
+api_key_env = "TINKER_API_KEY"

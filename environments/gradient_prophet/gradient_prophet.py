@@ -1,53 +1,89 @@
 from __future__ import annotations
 
+import asyncio
+import importlib.util
 import json
 import math
+import random
 import re
-from typing import Any, Mapping, MutableMapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
-import torch
+import numpy as np
 
-import verifiers as vf
-from custom_utils.shadow_utils import EphemeralShadow, get_seq_logprob
 from .data_gen import build_semantic_tension_dataset
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
 Messages = list[ChatMessage]
 
+_types_spec = importlib.util.find_spec("tinker_cookbook.rl.types")
+if _types_spec:
+    from tinker_cookbook.rl.types import Env as _TinkerEnv  # type: ignore
+    from tinker_cookbook.rl.types import StepResult  # type: ignore
+else:  # pragma: no cover - lightweight fallback for local development
+
+    @dataclass
+    class StepResult:  # type: ignore[misc]
+        observation: Any
+        reward: float
+        done: bool
+        info: Mapping[str, Any] | None = None
+
+    class _TinkerEnv:  # type: ignore[misc]
+        """Minimal stub to keep type-checkers satisfied when Tinker is absent."""
+
+        pass
+
 
 def _build_prompt(sample: Mapping[str, Any]) -> str:
     probes = sample.get("probes", [])
+    task = sample.get("task", "in_context")
+    if task == "in_context":
+        probe_idx = int(sample.get("probe_index", 0))
+        probe_idx = max(0, min(probe_idx, max(len(probes) - 1, 0)))
+        probe = probes[probe_idx] if probes else {"input": "", "target": ""}
+        return (
+            "You are the In-Context Prophet.\n"
+            "You will be shown a Lesson and a Probe Question with a Target Answer.\n"
+            "Predict how much attending to the Lesson will change the log-probability of the Target"
+            " Answer when answering the Probe. Output a single JSON array with one number.\n"
+            f"Lesson: {sample.get('lesson_input', '')}\n"
+            f"Lesson Answer: {sample.get('lesson_target', '')}\n"
+            f"Probe Question: {probe.get('input', '')}\n"
+            f"Target Answer: {probe.get('target', '')}\n"
+            "Prediction (as [delta_logprob]):"
+        )
+
     probe_lines = []
     for idx, probe in enumerate(probes):
         probe_lines.append(
-            f"{idx + 1}. Question: {probe['input']}\n   Target: {probe['target']}"
+            f"{idx + 1}. Question: {probe.get('input', '')}\n   Target: {probe.get('target', '')}"
         )
     probe_block = "\n".join(probe_lines)
     return (
-        "You are the Gradient Prophet.\n"
-        "Lesson Input: "
-        f"{sample['lesson_input']}\n"
-        "Lesson Target: "
-        f"{sample['lesson_target']}\n"
-        "After a single high-magnitude SGD step on the Lesson, predict the change in log-odds"
-        " for answering each target when asked its question. Provide a JSON list of floats in order.\n"
+        "You are the Surprise Prophet.\n"
+        "Given a Lesson and several Probe Questions, rank the probes by how surprising their"
+        " answers become after reading the Lesson (highest KL divergence first).\n"
+        f"Lesson: {sample.get('lesson_input', '')}\n"
+        f"Lesson Answer: {sample.get('lesson_target', '')}\n"
         "Probes:\n"
         f"{probe_block}\n"
+        "Return a JSON array of probe indices ordered from most to least surprising.\n"
         "Prediction:"
     )
 
 
-class ProphetParser(vf.Parser):
+class ProphetParser:
     number_re = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
 
-    def parse(self, text: str) -> dict[str, Any] | None:  # type: ignore[override]
+    def parse(self, text: str) -> dict[str, Any] | None:
         parsed = self.parse_answer([{"role": "assistant", "content": text}])
         if parsed is None:
             return None
         return {"predictions": parsed}
 
-    def parse_answer(self, completion: Messages) -> list[float] | None:  # type: ignore[override]
+    def parse_answer(self, completion: Messages) -> list[float] | None:
         if not completion:
             return None
         content = completion[-1].get("content")
@@ -65,124 +101,311 @@ class ProphetParser(vf.Parser):
         return [float(m) for m in matches] if matches else None
 
 
-def _prophet_reward(
-    prompt: Messages,
-    completion: Messages,
-    answer: str,
-    state: State,
-    info: Mapping[str, Any] | None = None,
-    *,
-    model,
-    tokenizer,
-) -> float:
-    del prompt, answer
-    if info is None:
+async def _target_logprob_async(client: Any, prompt: str, target: str) -> float | None:
+    if hasattr(client, "compute_logprobs_async"):
+        result = await client.compute_logprobs_async(prompt=prompt, targets=[target])  # type: ignore[attr-defined]
+    else:
+        func = getattr(client, "compute_logprobs", None)
+        if func is None:
+            return None
+        result = await asyncio.to_thread(func, prompt=prompt, targets=[target])
+    return _extract_logprob(result)
+
+
+async def _prompt_distributions(client: Any, prompt: str) -> list[dict[str, float]]:
+    request = {
+        "prompt": prompt,
+        "num_samples": 1,
+        "include_prompt_logprobs": True,
+        "topk_prompt_logprobs": 10,
+        "max_tokens": 1,
+    }
+    if hasattr(client, "sample_async"):
+        response = await client.sample_async(**request)  # type: ignore[attr-defined]
+    else:
+        func = getattr(client, "sample", None)
+        if func is None:
+            return []
+        response = await asyncio.to_thread(func, **request)
+    return _extract_prompt_distributions(response)
+
+
+def _extract_prompt_distributions(result: Any) -> list[dict[str, float]]:
+    if result is None:
+        return []
+    payload: Iterable[Any]
+    if isinstance(result, Mapping) and "data" in result:
+        payload = result.get("data") or []
+    elif isinstance(result, Sequence):
+        payload = result
+    else:
+        payload = []
+
+    distributions: list[dict[str, float]] = []
+    for entry in payload:
+        logprob_list = None
+        if isinstance(entry, Mapping) and "prompt_logprobs" in entry:
+            logprob_list = entry.get("prompt_logprobs")
+        elif isinstance(entry, Mapping) and "choices" in entry:
+            choices = entry.get("choices") or []
+            if isinstance(choices, Sequence) and choices and isinstance(choices[0], Mapping):
+                logprob_list = choices[0].get("prompt_logprobs")
+        if isinstance(logprob_list, Sequence):
+            for token_probs in logprob_list:
+                token_map: dict[str, float] = {}
+                if isinstance(token_probs, Mapping):
+                    topk = token_probs.get("top_logprobs") or token_probs.get("topk")
+                    if isinstance(topk, Sequence):
+                        for candidate in topk:
+                            if isinstance(candidate, Mapping):
+                                token = candidate.get("token")
+                                lp = candidate.get("logprob")
+                                if isinstance(token, str) and isinstance(lp, (int, float)):
+                                    token_map[token] = float(lp)
+                if token_map:
+                    distributions.append(token_map)
+    return distributions
+
+
+def _extract_logprob(result: Any) -> float | None:
+    if result is None:
+        return None
+    if isinstance(result, Mapping):
+        prompt_lp = result.get("prompt_logprobs") if hasattr(result, "get") else None
+        if isinstance(prompt_lp, Sequence) and prompt_lp:
+            for entry in reversed(prompt_lp):
+                if isinstance(entry, Mapping):
+                    lp_val = entry.get("total_logprob") or entry.get("logprob")
+                    if isinstance(lp_val, (int, float)):
+                        return float(lp_val)
+                elif isinstance(entry, (int, float)):
+                    return float(entry)
+        if "logprobs" in result:
+            lp = result.get("logprobs")
+            if isinstance(lp, Sequence) and lp:
+                first = lp[0]
+                if isinstance(first, Mapping) and "total_logprob" in first:
+                    return float(first["total_logprob"])
+                if isinstance(first, (int, float)):
+                    return float(first)
+        if "total_logprob" in result:
+            return float(result["total_logprob"])
+        if "data" in result:
+            return _extract_logprob(result.get("data"))
+    if isinstance(result, Sequence) and result:
+        first = result[0]
+        if isinstance(first, (int, float)):
+            return float(first)
+        if isinstance(first, Mapping):
+            return _extract_logprob(first)
+    attr_val = getattr(result, "total_logprob", None)
+    if isinstance(attr_val, (int, float)):
+        return float(attr_val)
+    attr_lp = getattr(result, "logprobs", None)
+    if isinstance(attr_lp, Sequence) and attr_lp:
+        first = attr_lp[0]
+        if isinstance(first, (int, float)):
+            return float(first)
+        if isinstance(first, Mapping):
+            return _extract_logprob(first)
+    return None
+
+
+def _normalize_ranking(predictions: Sequence[float], probe_count: int) -> list[int]:
+    seen = set()
+    order: list[int] = []
+    for value in predictions:
+        idx = int(round(float(value))) - 1
+        if 0 <= idx < probe_count and idx not in seen:
+            seen.add(idx)
+            order.append(idx)
+    for idx in range(probe_count):
+        if idx not in seen:
+            order.append(idx)
+    return order[:probe_count]
+
+
+def _spearman_corr(predicted_order: Sequence[int], actual_order: Sequence[int]) -> float:
+    if not predicted_order or not actual_order:
         return 0.0
-    sample = info.get("sample")
-    if not isinstance(sample, Mapping):
+    n = min(len(predicted_order), len(actual_order))
+    if n == 1:
+        return 1.0
+    trimmed_predicted = predicted_order[:n]
+    trimmed_actual = actual_order[:n]
+    pred_positions = {idx: pos for pos, idx in enumerate(trimmed_predicted)}
+    diffs_sq = []
+    for pos, idx in enumerate(trimmed_actual):
+        pred_pos = pred_positions.get(idx, n - 1)
+        diffs_sq.append((pred_pos - pos) ** 2)
+    numerator = 6 * sum(diffs_sq)
+    denominator = n * (n * n - 1)
+    return 1.0 - (numerator / denominator)
+
+
+def _kl_from_distributions(prior: dict[str, float], post: dict[str, float]) -> float:
+    if not prior or not post:
         return 0.0
+    kl = 0.0
+    for token, lp_post in post.items():
+        lp_prior = prior.get(token)
+        if lp_prior is None:
+            continue
+        p_post = math.exp(lp_post)
+        kl += p_post * (lp_post - lp_prior)
+    return kl
 
-    parser: ProphetParser | None = state.get("parser") if isinstance(state, Mapping) else None
-    if not isinstance(parser, ProphetParser):
-        parser = ProphetParser()
-        state["parser"] = parser
-    predictions = parser.parse_answer(completion) or []
 
-    lesson_input = str(sample.get("lesson_input", "")).strip()
-    lesson_target = str(sample.get("lesson_target", "")).strip()
-    probes: Sequence[Mapping[str, Any]] = sample.get("probes", [])
-    if not lesson_input or not lesson_target or not probes:
-        return 0.0
+class GradientProphetEnv(_TinkerEnv):
+    """Native Tinker-style environment that queries logprobs during reward."""
 
-    probe_inputs = [str(p.get("input", "")).strip() for p in probes]
-    probe_targets = [str(p.get("target", "")).strip() for p in probes]
+    def __init__(self, sample: Mapping[str, Any], sampling_client: Any) -> None:
+        self.sample = dict(sample)
+        self.sample.setdefault("task", random.choice(["in_context", "surprise"]))
+        if self.sample["task"] == "in_context":
+            probes = self.sample.get("probes", []) or []
+            self.sample["probe_index"] = int(self.sample.get("probe_index", 0)) % max(len(probes), 1)
+        self.sample["prompt"] = _build_prompt(self.sample)
+        self.parser = ProphetParser()
+        self.sampling_client = sampling_client
 
-    lesson_prompt_ids = tokenizer(
-        lesson_input, return_tensors="pt", add_special_tokens=False
-    ).input_ids
-    lesson_target_ids = tokenizer(
-        lesson_target, return_tensors="pt", add_special_tokens=False
-    ).input_ids
+    def initial_observation(self) -> str:
+        return str(self.sample.get("prompt", ""))
 
-    probe_prompt_ids = [
-        tokenizer(p, return_tensors="pt", add_special_tokens=False).input_ids for p in probe_inputs
-    ]
-    probe_target_ids = [
-        tokenizer(t, return_tensors="pt", add_special_tokens=False).input_ids for t in probe_targets
-    ]
+    async def step(self, action: Any) -> StepResult:  # type: ignore[override]
+        reward = await self._evaluate_reward(action)
+        return StepResult(observation=None, reward=reward, done=True, info={"task": self.sample.get("task")})
 
-    device = next(model.parameters()).device
-    lesson_prompt_ids = lesson_prompt_ids.to(device)
-    lesson_target_ids = lesson_target_ids.to(device)
-    pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id
+    async def _evaluate_reward(self, action: Any) -> float:
+        predictions = self._parse_predictions(action)
+        lesson_input = str(self.sample.get("lesson_input", "")).strip()
+        lesson_target = str(self.sample.get("lesson_target", "")).strip()
+        probes: Sequence[Mapping[str, Any]] = self.sample.get("probes", [])
+        task = str(self.sample.get("task", "in_context"))
 
-    with torch.no_grad():
-        pre_scores = get_seq_logprob(
-            model,
-            prompt_ids=probe_prompt_ids,
-            target_ids=probe_target_ids,
-            pad_token_id=pad_token_id,
+        if not lesson_input or not lesson_target or not probes:
+            return 0.0
+
+        if task == "in_context":
+            return await self._reward_in_context(predictions, lesson_input, lesson_target, probes)
+
+        return await self._reward_surprise(predictions, lesson_input, lesson_target, probes)
+
+    def _parse_predictions(self, action: Any) -> list[float]:
+        completion: Messages = [{"role": "assistant", "content": str(action)}]
+        parsed = self.parser.parse_answer(completion)
+        if parsed is None:
+            return []
+        return parsed
+
+    async def _reward_in_context(
+        self,
+        predictions: Sequence[float],
+        lesson_input: str,
+        lesson_target: str,
+        probes: Sequence[Mapping[str, Any]],
+    ) -> float:
+        probe_index = int(self.sample.get("probe_index", 0))
+        probe_index = max(0, min(probe_index, max(len(probes) - 1, 0)))
+        probe = probes[probe_index]
+        probe_question = str(probe.get("input", "")).strip()
+        probe_answer = str(probe.get("target", "")).strip()
+
+        prior_prompt = f"{probe_question}\nAnswer:"
+        post_prompt = (
+            f"Lesson: {lesson_input}\nLesson Answer: {lesson_target}\n\n"
+            f"{probe_question}\nAnswer:"
         )
 
-    with EphemeralShadow(model, adapter_name="prophet-shadow") as shadow:
-        shadow.run_shadow_update(
-            lesson_prompt_ids,
-            lesson_target_ids,
-            pad_token_id=pad_token_id,
+        prior, post = await asyncio.gather(
+            _target_logprob_async(self.sampling_client, prior_prompt, probe_answer),
+            _target_logprob_async(self.sampling_client, post_prompt, probe_answer),
         )
-        with torch.no_grad():
-            post_scores = get_seq_logprob(
-                shadow.model,
-                prompt_ids=probe_prompt_ids,
-                target_ids=probe_target_ids,
-                pad_token_id=pad_token_id,
+        if prior is None or post is None:
+            return 0.0
+
+        delta_true = post - prior
+        delta_pred = float(predictions[0]) if predictions else 0.0
+        error = abs(delta_true - delta_pred)
+        return float(1.0 - math.tanh(error))
+
+    async def _reward_surprise(
+        self,
+        predictions: Sequence[float],
+        lesson_input: str,
+        lesson_target: str,
+        probes: Sequence[Mapping[str, Any]],
+    ) -> float:
+        prior_scores: list[float] = []
+        post_scores: list[float] = []
+
+        for probe in probes:
+            probe_question = str(probe.get("input", "")).strip()
+            probe_answer = str(probe.get("target", "")).strip()
+            base_prompt = f"{probe_question}\nAnswer:"
+            conditioned_prompt = (
+                f"Lesson: {lesson_input}\nLesson Answer: {lesson_target}\n\n"
+                f"{probe_question}\nAnswer:"
+            )
+            prior_dist, post_dist = await asyncio.gather(
+                _prompt_distributions(self.sampling_client, base_prompt),
+                _prompt_distributions(self.sampling_client, conditioned_prompt),
             )
 
-    deltas = post_scores - pre_scores
-    parsed_predictions = predictions[: len(deltas)] if predictions else [0.0] * len(deltas)
-    if len(parsed_predictions) < len(deltas):
-        parsed_predictions.extend([0.0] * (len(deltas) - len(parsed_predictions)))
+            if not prior_dist or not post_dist:
+                prior = await _target_logprob_async(
+                    self.sampling_client, base_prompt, probe_answer
+                )
+                post = await _target_logprob_async(
+                    self.sampling_client, conditioned_prompt, probe_answer
+                )
+                if prior is None or post is None:
+                    continue
+                prior_scores.append(prior)
+                post_scores.append(post)
+                continue
 
-    errors = [abs(float(d) - float(p)) for d, p in zip(deltas.tolist(), parsed_predictions)]
-    rewards = [1.0 - math.tanh(err) for err in errors]
-    return float(sum(rewards) / max(len(rewards), 1))
+            kl = _kl_from_distributions(prior_dist[-1], post_dist[-1])
+            prior_scores.append(kl)
+            post_scores.append(kl)
 
+        if not prior_scores:
+            return 0.0
 
-def _build_rubric(parser: ProphetParser) -> vf.Rubric:
-    def wrapped(prompt: Messages, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None, **kwargs: Any) -> float:
-        state.setdefault("parser", parser)
-        return _prophet_reward(prompt, completion, answer, state, info, **kwargs)
+        kl_scores: list[float] = []
+        if len(prior_scores) == len(probes) and len(post_scores) == len(probes):
+            for prior, post in zip(prior_scores, post_scores):
+                if prior == post:
+                    kl_scores.append(prior)
+                else:
+                    p_prior = math.exp(prior)
+                    p_post = math.exp(post)
+                    kl_scores.append(p_post * (post - prior))
 
-    return vf.Rubric(funcs=[wrapped])
+        actual_order = list(np.argsort([-score for score in kl_scores])) if kl_scores else []
+        predicted_order = _normalize_ranking(predictions, len(probes))
+        if not predicted_order or not actual_order:
+            return 0.0
 
-
-class GradientProphetEnv(vf.SingleTurnEnv):
-    def __init__(self, dataset: Sequence[Mapping[str, Any]], parser: ProphetParser, rubric: vf.Rubric, **kwargs: Any) -> None:
-        prompts = []
-        for sample in dataset:
-            prompt = _build_prompt(sample)
-            entry = dict(sample)
-            entry["prompt"] = prompt
-            prompts.append(entry)
-        super().__init__(dataset=prompts, parser=parser, rubric=rubric, **kwargs)
-
-    def apply_loss_mask(self, tokenizer, input_ids, labels, *, prompt_length: Sequence[int] | None = None):  # type: ignore[override]
-        labels_tensor = labels if not isinstance(labels, dict) else labels.get("input_ids")
-        labels_tensor = labels_tensor.clone()
-        if prompt_length is None:
-            labels_tensor[:] = -100
-            return labels_tensor
-        for idx, pl in enumerate(prompt_length):
-            cutoff = int(pl)
-            labels_tensor[idx, :cutoff] = -100
-        return labels_tensor
-
-
-def load_environment(**kwargs: Any) -> GradientProphetEnv:
-    dataset = build_semantic_tension_dataset()
-    parser = ProphetParser()
-    rubric = _build_rubric(parser)
-    return GradientProphetEnv(dataset=dataset, parser=parser, rubric=rubric, **kwargs)
+        correlation = _spearman_corr(predicted_order, actual_order)
+        return float(correlation)
 
 
-__all__ = ["load_environment"]
+class GradientProphetDatasetBuilder:
+    """Prepare Prophet environments for Tinker RL runs."""
+
+    def __init__(self, samples: Sequence[Mapping[str, Any]] | None = None) -> None:
+        self.samples = list(samples) if samples is not None else build_semantic_tension_dataset()
+
+    def build(self, sampling_client: Any) -> list[GradientProphetEnv]:
+        envs: list[GradientProphetEnv] = []
+        for sample in self.samples:
+            envs.append(GradientProphetEnv(sample, sampling_client))
+        return envs
+
+
+def load_environment(**_: Any) -> GradientProphetDatasetBuilder:
+    return GradientProphetDatasetBuilder()
+
+
+__all__ = ["GradientProphetEnv", "GradientProphetDatasetBuilder", "load_environment"]
