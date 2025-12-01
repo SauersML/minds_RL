@@ -12,7 +12,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Protocol, Sequence
 
-from transformers import AutoTokenizer
+import torch
+from torch import nn
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from trl import GRPOConfig, GRPOTrainer
 from vllm import AsyncEngineArgs, AsyncLLMEngine, SamplingParams
 from transformers import AutoTokenizer
 
@@ -68,7 +71,7 @@ def _generate_arithmetic_items(
     max_value: int = 999,
     seed: int = 1337,
 ) -> list[dict[str, Any]]:
-    """Generate a synthetic dataset of basic addition and subtraction problems."""
+    """Generate a synthetic dataset of arithmetic problems with extreme values."""
 
     rng = random.Random(seed)
     questions: set[str] = set()
@@ -80,7 +83,9 @@ def _generate_arithmetic_items(
             return "easy"
         if magnitude < 500:
             return "medium"
-        return "hard"
+        if magnitude < 50_000:
+            return "hard"
+        return "extreme"
 
     def _distractors(answer: int) -> list[str]:
         distractor_values: set[int] = set()
@@ -91,14 +96,23 @@ def _generate_arithmetic_items(
                 distractor_values.add(candidate)
         return [str(value) for value in sorted(distractor_values)]
 
-    operations = ["+", "-"]
+    operations = ["+", "-", "*"]
     while len(items) < sample_count:
-        a = rng.randint(min_value, max_value)
-        b = rng.randint(min_value, max_value)
+        if rng.random() < 0.15:
+            a = rng.randint(10_000_000, 1_000_000_000_000)
+            b = rng.randint(10_000_000, 1_000_000_000_000)
+        else:
+            a = rng.randint(min_value, max_value)
+            b = rng.randint(min_value, max_value)
         op = rng.choice(operations)
         if op == "-" and b > a:
             a, b = b, a
-        answer = a + b if op == "+" else a - b
+        if op == "*":
+            answer = a * b
+        elif op == "+":
+            answer = a + b
+        else:
+            answer = a - b
         question = f"What is {a} {op} {b}?"
         if question in questions:
             continue
@@ -110,7 +124,11 @@ def _generate_arithmetic_items(
                 "metadata": {
                     "difficulty": difficulty,
                     "source": "synthetic-arithmetic",
-                    "operation": "addition" if op == "+" else "subtraction",
+                    "operation": "multiplication"
+                    if op == "*"
+                    else "addition"
+                    if op == "+"
+                    else "subtraction",
                     "aliases": [str(answer)],
                     "distractors": _distractors(answer),
                 },
@@ -550,7 +568,12 @@ class InferenceClient(Protocol):
 
 
 class TransformerInferenceClient:
-    """Runs high-throughput inference using vLLM."""
+    """Inference and GRPO training wrapper for Qwen models.
+
+    The class keeps a trainable PyTorch model for GRPO updates while optionally
+    using vLLM for high-throughput rollouts. When vLLM is unavailable or
+    disabled, generation falls back to the local model.
+    """
 
     def __init__(
         self,
@@ -561,49 +584,117 @@ class TransformerInferenceClient:
         tensor_parallel_size: int = 1,
         gpu_memory_utilization: float = 0.9,
         max_batch_size: int = 16,
+        rollout_with_vllm: bool = True,
+        grpo_output_dir: str = "./grpo-qwen",
     ):
-        sampling_params = SamplingParams(
-            temperature=temperature,
-            max_tokens=max_new_tokens,
-            n=1,
-        )
-        engine_args = AsyncEngineArgs(
-            model=model_id,
-            tensor_parallel_size=tensor_parallel_size,
-            gpu_memory_utilization=gpu_memory_utilization,
-            max_num_seqs=max_batch_size,
-        )
-        self._sampling_params = sampling_params
-        self._engine = AsyncLLMEngine.from_engine_args(engine_args)
+        self.model_id = model_id
+        self.max_new_tokens = max_new_tokens
+        self.temperature = temperature
 
-        self._tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.model: nn.Module = AutoModelForCausalLM.from_pretrained(model_id)
+        self.model.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+        self.model.train()
 
+        self._engine: AsyncLLMEngine | None = None
+        if rollout_with_vllm:
+            sampling_params = SamplingParams(
+                temperature=temperature,
+                max_tokens=max_new_tokens,
+                n=1,
+            )
+            engine_args = AsyncEngineArgs(
+                model=model_id,
+                tensor_parallel_size=tensor_parallel_size,
+                trust_remote_code=True,
+                gpu_memory_utilization=gpu_memory_utilization,
+                max_num_batched_tokens=max_batch_size * max_new_tokens,
+            )
+            try:
+                self._engine = AsyncLLMEngine.from_engine_args(engine_args)
+                self._sampling_params = sampling_params
+            except Exception:
+                # Fallback to pure PyTorch if vLLM cannot be initialized in the
+                # current environment.
+                print("Error: vLLM cannot be initialized.")
+                self._engine = None
+
+        self._grpo_trainer: GRPOTrainer | None = None
+        self._grpo_output_dir = grpo_output_dir
 
     def _format_messages(self, messages: Messages) -> str:
-        return self._tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=True,
-        )
+        parts: list[str] = []
+        for message in messages:
+            role = message.get("role")
+            content = message.get("content")
+            parts.append(f"[{role}] {content}")
+        return "\n".join(parts)
+
+    def _generate_with_torch(self, messages: Messages) -> str:
+        prompt = self._format_messages(messages)
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+                do_sample=True,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
+        completion = outputs[0][inputs["input_ids"].shape[-1] :]
+        return self.tokenizer.decode(completion, skip_special_tokens=True)
 
     async def generate(self, messages: Messages) -> str:
-        prompt = self._format_messages(messages)
-        request_id = str(uuid.uuid4())
-        stream = self._engine.generate(
-            prompt=prompt,
-            sampling_params=self._sampling_params,
-            request_id=request_id,
+        if self._engine is not None:
+            prompt = self._format_messages(messages)
+            request_id = str(uuid.uuid4())
+            stream = self._engine.generate(
+                prompt=prompt,
+                sampling_params=self._sampling_params,
+                request_id=request_id,
+            )
+
+            async for request_output in stream:
+                if not request_output.outputs:
+                    continue
+                output_text = request_output.outputs[0].text
+                if request_output.finished:
+                    return output_text.strip()
+
+        return await asyncio.to_thread(self._generate_with_torch, messages)
+
+    def setup_grpo_trainer(
+        self,
+        train_dataset: Sequence[Mapping[str, Any]],
+        reward_functions: Sequence[Callable[..., float]],
+        *,
+        per_device_train_batch_size: int = 1,
+        gradient_accumulation_steps: int = 1,
+        num_train_epochs: int = 1,
+        learning_rate: float = 5e-5,
+    ) -> None:
+        config = GRPOConfig(
+            output_dir=self._grpo_output_dir,
+            per_device_train_batch_size=per_device_train_batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            num_train_epochs=num_train_epochs,
+            learning_rate=learning_rate,
+            logging_steps=1,
+        )
+        self._grpo_trainer = GRPOTrainer(
+            model=self.model,
+            reward_funcs=list(reward_functions),
+            args=config,
+            train_dataset=train_dataset,
+            tokenizer=self.tokenizer,
         )
 
-        async for request_output in stream:
-            if not request_output.outputs:
-                continue
-            output_text = request_output.outputs[0].text
-            if request_output.finished:
-                return output_text.strip()
-
-        raise RuntimeError("Model did not return generated text")
+    def train(self) -> None:
+        if self._grpo_trainer is None:
+            raise RuntimeError("GRPO trainer is not configured. Call setup_grpo_trainer first.")
+        self._grpo_trainer.train()
 
 class SelfPredictionVerifier:
     def __init__(self, env: SelfPredictionRLVREnv | None = None):
