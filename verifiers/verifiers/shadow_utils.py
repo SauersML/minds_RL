@@ -5,7 +5,6 @@ from typing import List, Sequence
 
 import torch
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_sequence
 from peft import LoraConfig, get_peft_model
 
 
@@ -33,6 +32,7 @@ class EphemeralShadow(AbstractContextManager):
         self.steps = steps
         self.adapter_name = adapter_name
         self._optimizer: torch.optim.Optimizer | None = None
+        self._requires_grad_backup: dict[str, bool] = {}
 
     def __enter__(self) -> "EphemeralShadow":
         config = LoraConfig(
@@ -46,6 +46,11 @@ class EphemeralShadow(AbstractContextManager):
         else:
             self.model.add_adapter(config, adapter_name=self.adapter_name)
         self.model.train()
+        self._requires_grad_backup = {
+            name: param.requires_grad for name, param in self.model.named_parameters()
+        }
+        for name, param in self.model.named_parameters():
+            param.requires_grad = self.adapter_name in name
         trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         self._optimizer = torch.optim.SGD(trainable_params, lr=self.lr)
         return self
@@ -56,6 +61,10 @@ class EphemeralShadow(AbstractContextManager):
                 self.model.delete_adapter(self.adapter_name)
             except Exception:
                 pass
+        if self._requires_grad_backup:
+            for name, param in self.model.named_parameters():
+                if name in self._requires_grad_backup:
+                    param.requires_grad = self._requires_grad_backup[name]
         self.model.eval()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -137,8 +146,22 @@ def get_seq_logprob(
         else:
             combined_masks.append(torch.ones_like(combined[-1], device=device))
 
-    padded = pad_sequence(combined, batch_first=True, padding_value=pad_token_id)
-    padded_mask = pad_sequence(combined_masks, batch_first=True, padding_value=0)
+    max_len = max(t.size(1) for t in combined)
+    padded = []
+    padded_mask = []
+    for seq, mask in zip(combined, combined_masks):
+        pad_len = max_len - seq.size(1)
+        if pad_len > 0:
+            pad_tensor = torch.full((seq.size(0), pad_len), pad_token_id, device=device)
+            pad_mask = torch.zeros((mask.size(0), pad_len), device=device, dtype=mask.dtype)
+            padded.append(torch.cat([pad_tensor, seq], dim=1))
+            padded_mask.append(torch.cat([pad_mask, mask], dim=1))
+        else:
+            padded.append(seq)
+            padded_mask.append(mask)
+
+    padded = torch.stack(padded, dim=0)
+    padded_mask = torch.stack(padded_mask, dim=0)
 
     outputs = model(input_ids=padded, attention_mask=padded_mask)
     logits = outputs.logits[:, :-1, :]

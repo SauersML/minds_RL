@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 import importlib.util
 import sys
+import json
+from contextlib import nullcontext
 
 import torch
 import torch.nn.functional as F
@@ -38,6 +40,7 @@ class Trainer:
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = "left"
         self.device = (
             "cuda"
             if torch.cuda.is_available() and config.gpus and config.gpus > 0
@@ -45,7 +48,7 @@ class Trainer:
         )
         self.model = AutoModelForCausalLM.from_pretrained(
             config.model_name,
-            torch_dtype=torch.float32,
+            torch_dtype=torch.bfloat16,
         )
         if config.use_lora:
             lora_config = LoraConfig(
@@ -64,14 +67,6 @@ class Trainer:
             )
             self.model = get_peft_model(self.model, lora_config)
         self.model.to(self.device)
-        self.ref_model = AutoModelForCausalLM.from_pretrained(
-            config.model_name,
-            torch_dtype=torch.float32,
-        )
-        self.ref_model.to(self.device)
-        self.ref_model.eval()
-        for param in self.ref_model.parameters():
-            param.requires_grad = False
         trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         self.optimizer = AdamW(trainable_params, lr=1e-4)
 
@@ -130,6 +125,7 @@ class Trainer:
 
         losses: list[float] = []
         rewards: list[float] = []
+        metrics_history: list[dict[str, float | int]] = []
 
         dataset = self.env.dataset
         steps = max_steps if max_steps > 0 else 1
@@ -236,10 +232,13 @@ class Trainer:
             token_log_probs = log_probs.gather(2, padded_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
 
             ref_logits_chunks = []
-            with torch.no_grad():
+            ref_context = (
+                self.model.disable_adapter() if hasattr(self.model, "disable_adapter") else nullcontext()
+            )
+            with torch.no_grad(), ref_context:
                 for start in range(0, padded_ids.size(0), micro):
                     end = start + micro
-                    ref_outputs = self.ref_model(
+                    ref_outputs = self.model(
                         input_ids=padded_ids[start:end],
                         attention_mask=attention_mask[start:end],
                     )
@@ -261,6 +260,8 @@ class Trainer:
             reward_var = sum((r - reward_mean) ** 2 for r in adjusted_rewards) / max(len(adjusted_rewards) - 1, 1)
             reward_std = reward_var ** 0.5 if reward_var > 0 else 1e-6
             advantages = [(r - reward_mean) / reward_std for r in adjusted_rewards]
+
+            self.model.train()
 
             loss_values: list[float] = []
             for idx, advantage in enumerate(advantages):
@@ -284,14 +285,21 @@ class Trainer:
             losses.append(sum(loss_values) / max(len(loss_values), 1))
             rewards.append(float(reward_mean))
 
+            metrics_history.append(
+                {"loss": losses[-1], "reward": rewards[-1], "step": step}
+            )
+            metrics_path.write_text(json.dumps(metrics_history, indent=2))
+
+            if step % 10 == 0 or step == steps - 1:
+                self.save_checkpoint(output_path / f"checkpoint-{step}")
+
         metrics = {
             "loss": sum(losses) / len(losses) if losses else 0.0,
             "reward": sum(rewards) / len(rewards) if rewards else 0.0,
         }
-        metrics_path.write_text(
-            "{\n  \"loss\": %.6f,\n  \"reward\": %.6f\n}" % (metrics["loss"], metrics["reward"])
-        )
-        self.save_checkpoint(output_path / "checkpoint")
+        metrics_history.append({"loss": metrics["loss"], "reward": metrics["reward"]})
+        metrics_path.write_text(json.dumps(metrics_history, indent=2))
+        self.save_checkpoint(output_path / "checkpoint-final")
         return metrics
 
     def save_checkpoint(self, path: Path) -> None:
