@@ -37,7 +37,7 @@ class TrainerConfig:
     base_model: str
     rollouts_per_example: int = 4
     max_new_tokens: int = 256
-    loss_fn: str = "importance_sampling"
+    loss_fn: str = "ppo"
     tinker_api_key: str | None = None
     training_rank: int = 32
     learning_rate: float = 1e-4
@@ -196,7 +196,7 @@ class Trainer:
             base_model=base_model,
             rollouts_per_example=int(trainer_cfg.get("rollouts_per_example", 4)),
             max_new_tokens=int(trainer_args.get("max_new_tokens", 256)),
-            loss_fn=str(trainer_cfg.get("loss_fn", "importance_sampling")),
+            loss_fn=str(trainer_cfg.get("loss_fn", "ppo")),
             tinker_api_key=api_key,
             training_rank=int(trainer_args.get("training_rank", 32)),
             learning_rate=float(trainer_args.get("learning_rate", 1e-4)),
@@ -434,8 +434,12 @@ class Trainer:
 
             rewards_array = np.asarray(completion_rewards, dtype=np.float32)
             baseline = float(np.mean(rewards_array)) if rewards_array.size > 0 else 0.0
+            reward_std = float(np.std(rewards_array)) if rewards_array.size > 0 else 0.0
+            denom = reward_std + 1e-4
             advantages = (
-                (rewards_array - baseline).tolist() if rewards_array.size > 0 else []
+                ((rewards_array - baseline) / denom).tolist()
+                if rewards_array.size > 0
+                else []
             )
 
             datums: list[Any] = []
