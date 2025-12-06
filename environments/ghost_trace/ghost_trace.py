@@ -4,6 +4,7 @@ import random
 import zlib
 from typing import Any, Mapping, MutableMapping, Sequence
 
+from datasets import Dataset
 import verifiers as vf
 from custom_utils.utils import smith_waterman_affine
 
@@ -200,7 +201,8 @@ def load_environment(num_examples: int = 5000, **kwargs: Any) -> GhostTraceEnv:
         raise ValueError("num_examples must be positive")
     parser = GhostTraceParser()
     rubric = _build_rubric(parser)
-    dataset = _build_dataset(count)
+    dataset_list = _build_dataset(count)
+    dataset = Dataset.from_list(dataset_list)
     return GhostTraceEnv(dataset=dataset, parser=parser, rubric=rubric, **kwargs)
 
 
