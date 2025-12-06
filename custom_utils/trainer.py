@@ -13,7 +13,7 @@ from typing import Any, Mapping, MutableMapping, Sequence
 
 import numpy as np
 
-from tinker_cookbook import get_renderer as tinker_get_renderer, get_tokenizer as tinker_get_tokenizer
+from tinker_cookbook.infrastructure import get_renderer as tinker_get_renderer, get_tokenizer as tinker_get_tokenizer
 from tinker_cookbook.completers import TinkerTokenCompleter
 
 try:  # Python 3.11+
