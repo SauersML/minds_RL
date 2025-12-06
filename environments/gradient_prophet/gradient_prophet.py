@@ -263,7 +263,13 @@ class GradientProphetEnv(Env):
 
     async def step(self, action: Any) -> StepResult:  # type: ignore[override]
         reward = await self._evaluate_reward(action)
-        return StepResult(reward=reward, done=True, info={"task": self.sample.get("task")})
+        return StepResult(
+            reward=reward,
+            episode_done=True,
+            next_observation="",
+            next_stop_condition=[],
+            metrics={"task": self.sample.get("task", "")},
+        )
 
     async def _evaluate_reward(self, action: Any) -> float:
         predictions = self._parse_predictions(action)
