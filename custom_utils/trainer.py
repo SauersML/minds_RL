@@ -13,10 +13,16 @@ from typing import Any, Mapping, MutableMapping, Sequence
 
 import numpy as np
 
-from tinker_cookbook.renderers import get_renderer as tinker_get_renderer
-from tinker_cookbook.tokenizer_utils import get_tokenizer as tinker_get_tokenizer
-from tinker_cookbook.model_info import get_recommended_renderer_name
-from tinker_cookbook.completers import TinkerTokenCompleter
+try:
+    from tinker_cookbook.renderers import get_renderer as tinker_get_renderer
+    from tinker_cookbook.tokenizer_utils import get_tokenizer as tinker_get_tokenizer
+    from tinker_cookbook.model_info import get_recommended_renderer_name
+    from tinker_cookbook.completers import TinkerTokenCompleter
+except ImportError:
+    tinker_get_renderer = None
+    tinker_get_tokenizer = None
+    get_recommended_renderer_name = None
+    TinkerTokenCompleter = None
 
 try:  # Python 3.11+
     import tomllib
@@ -40,6 +46,58 @@ class TrainerConfig:
     learning_rate: float = 1e-4
 
 
+class SamplingClientAdapter:
+    def __init__(self, client: Any, tokenizer: Any) -> None:
+        self._client = client
+        self._tokenizer = tokenizer
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+    async def compute_logprobs_async(
+        self, prompt: str, targets: Sequence[str] | None = None, **kwargs: Any
+    ) -> Any:
+        if not targets:
+            return await self._client.compute_logprobs_async(prompt=prompt, **kwargs)
+
+        results = []
+        for target in targets:
+            full_text = prompt + target
+            result = await self._client.compute_logprobs_async(prompt=full_text, **kwargs)
+
+            # Try to extract a sequence of logprobs from the result
+            logprobs_seq = None
+            if hasattr(result, "get"):
+                logprobs_seq = result.get("prompt_logprobs") or result.get("logprobs")
+            elif hasattr(result, "prompt_logprobs"):
+                logprobs_seq = result.prompt_logprobs
+
+            total = 0.0
+            if logprobs_seq and hasattr(self._tokenizer, "encode"):
+                prompt_tokens = self._tokenizer.encode(prompt, add_special_tokens=False)
+                offset = len(prompt_tokens)
+
+                current_idx = 0
+                for item in logprobs_seq:
+                    val = 0.0
+                    if isinstance(item, (float, int)):
+                        val = float(item)
+                    elif hasattr(item, "get"):
+                        val = float(item.get("logprob") or item.get("total_logprob") or 0.0)
+                    elif hasattr(item, "logprob"):
+                        val = float(item.logprob)
+
+                    if current_idx >= offset:
+                        total += val
+                    current_idx += 1
+
+            results.append({"total_logprob": total})
+
+        if len(targets) == 1 and len(results) == 1:
+            return results[0]
+        return results
+
+
 class Trainer:
     def __init__(self, config: TrainerConfig, env: Any) -> None:
         self.config = config
@@ -61,6 +119,29 @@ class Trainer:
         def decode(self, tokens: Sequence[int], skip_special_tokens: bool = True):
             del skip_special_tokens
             return " ".join(str(token) for token in tokens)
+
+        def encode(self, text: str, add_special_tokens: bool = True):
+            del add_special_tokens
+            return [ord(c) % 1000 for c in text]
+
+    class _DummyRenderer:
+        def build_generation_prompt(self, messages: Any) -> list[int]:
+            content = "\n".join(str(msg.get("content", "")) for msg in messages if isinstance(msg, Mapping))
+            return [len(content) % 7, len(content) % 5, len(content) % 3]
+
+        def get_stop_sequences(self) -> list[str]:
+            return []
+
+    class _DummyCompleter:
+        def __init__(self, sampling_client: Any, max_tokens: int = 256):
+            self.sampling_client = sampling_client
+            self.max_tokens = max_tokens
+
+        async def __call__(self, model_input: Any, stop_sequences: list[str]) -> Any:
+            class DummyTokens:
+                tokens = [0, 1, 2]
+                logprobs = [0.0, 0.0, 0.0]
+            return DummyTokens()
 
     class _DummyTinker:
         """Minimal stand-in for the tinker SDK to keep CI tests offline."""
@@ -106,6 +187,9 @@ class Trainer:
                 self.api_key = api_key
 
             def create_lora_training_client(self, base_model: str, rank: int = 32):
+                return Trainer._DummyTinker.TrainingClient(base_model, rank)
+
+            async def create_lora_training_client_async(self, base_model: str, rank: int = 32):
                 return Trainer._DummyTinker.TrainingClient(base_model, rank)
 
             def create_sampling_client(self, base_model: str, **_: Any):
@@ -273,8 +357,12 @@ class Trainer:
         if self.renderer is not None:
             return
         self._ensure_tokenizer()
-        renderer_name = get_recommended_renderer_name(self.config.base_model)
-        self.renderer = tinker_get_renderer(renderer_name, self.tokenizer)
+        if get_recommended_renderer_name is not None and tinker_get_renderer is not None:
+            renderer_name = get_recommended_renderer_name(self.config.base_model)
+            self.renderer = tinker_get_renderer(renderer_name, self.tokenizer)
+        else:
+            # Fallback for when tinker_cookbook is missing
+            self.renderer = self._DummyRenderer()
 
     def _flatten_model_input_tokens(self, model_input: Any) -> list[int]:
         tokens: list[int] = []
@@ -297,42 +385,48 @@ class Trainer:
 
     async def _prepare_sampling_client(self, training_client: Any, service_client: Any, step: int) -> Any:
         step_name = f"step_{step}"
+        sampling_client = None
 
         saver = getattr(training_client, "save_weights_and_get_sampling_client", None)
         if callable(saver):
             sampling_client = await self._maybe_await(saver(name=step_name))
-            if sampling_client is not None:
-                return sampling_client
 
-        save_weights = getattr(training_client, "save_weights_for_sampler", None)
-        if callable(save_weights):
-            saved_weights = await self._maybe_await(save_weights(name=step_name))
-            if hasattr(saved_weights, "sample"):
-                return saved_weights
+        if sampling_client is None:
+            save_weights = getattr(training_client, "save_weights_for_sampler", None)
+            if callable(save_weights):
+                saved_weights = await self._maybe_await(save_weights(name=step_name))
+                if hasattr(saved_weights, "sample"):
+                    sampling_client = saved_weights
+                else:
+                    creator = getattr(service_client, "create_sampling_client", None)
+                    if callable(creator):
+                        candidate_kwargs = [
+                            {"base_model": self.config.base_model, "weights_path": saved_weights},
+                            {"base_model": self.config.base_model, "weights": saved_weights},
+                            {"base_model": self.config.base_model, "checkpoint": saved_weights},
+                            {"base_model": self.config.base_model, "path": saved_weights},
+                            {"base_model": self.config.base_model},
+                        ]
+                        for kwargs in candidate_kwargs:
+                            try:
+                                sampling_client = creator(**kwargs)
+                                if sampling_client is not None:
+                                    break
+                            except TypeError:
+                                continue
 
+        if sampling_client is None:
             creator = getattr(service_client, "create_sampling_client", None)
             if callable(creator):
-                candidate_kwargs = [
-                    {"base_model": self.config.base_model, "weights_path": saved_weights},
-                    {"base_model": self.config.base_model, "weights": saved_weights},
-                    {"base_model": self.config.base_model, "checkpoint": saved_weights},
-                    {"base_model": self.config.base_model, "path": saved_weights},
-                    {"base_model": self.config.base_model},
-                ]
-                for kwargs in candidate_kwargs:
-                    try:
-                        return creator(**kwargs)
-                    except TypeError:
-                        continue
+                try:
+                    sampling_client = creator(base_model=self.config.base_model)
+                except Exception:
+                    pass
 
-        creator = getattr(service_client, "create_sampling_client", None)
-        if callable(creator):
-            try:
-                return creator(base_model=self.config.base_model)
-            except Exception:
-                pass
+        if sampling_client is None:
+            sampling_client = service_client
 
-        return service_client
+        return SamplingClientAdapter(sampling_client, self.tokenizer)
 
     async def _train(self, *, max_steps: int = 1, output_dir: Path | str | None = None) -> dict[str, Any]:
         output_path = Path(output_dir) if output_dir is not None else Path("outputs")
@@ -387,10 +481,16 @@ class Trainer:
             completion_texts: list[str] = []
             completion_data: list[dict[str, Any]] = []
             for _ in range(self.config.rollouts_per_example):
-                completer = TinkerTokenCompleter(
-                    sampling_client=sampling_client,
-                    max_tokens=self.config.max_new_tokens,
-                )
+                if TinkerTokenCompleter is not None:
+                    completer = TinkerTokenCompleter(
+                        sampling_client=sampling_client,
+                        max_tokens=self.config.max_new_tokens,
+                    )
+                else:
+                    completer = self._DummyCompleter(
+                        sampling_client=sampling_client,
+                        max_tokens=self.config.max_new_tokens,
+                    )
                 tokens_with_logprobs = await completer(model_input, stop_sequences)
 
                 completion_tokens = tokens_with_logprobs.tokens
@@ -541,8 +641,11 @@ class Trainer:
                     if callable(optim_fn)
                     else training_client.optim_step(adam_params)
                 )
+                async def _background_step(fw, op):
+                    await asyncio.gather(fw, op)
+
                 training_task = asyncio.create_task(
-                    asyncio.gather(
+                    _background_step(
                         self._maybe_await(forward),
                         self._maybe_await(optim),
                     )
