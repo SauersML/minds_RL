@@ -6,6 +6,10 @@ import time
 from pathlib import Path
 import importlib
 
+# Ensure project root is in sys.path so 'custom_utils' (flat layout) is importable
+if os.getcwd() not in sys.path:
+    sys.path.insert(0, os.getcwd())
+
 # --- Configuration ---
 TINKER_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
 MAX_STEPS = 1
