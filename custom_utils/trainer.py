@@ -13,13 +13,8 @@ from typing import Any, Mapping, MutableMapping, Sequence
 
 import numpy as np
 
-try:
-    from tinker_cookbook import get_renderer as tinker_get_renderer, get_tokenizer as tinker_get_tokenizer
-    from tinker_cookbook.completers import TinkerTokenCompleter
-except ImportError:  # pragma: no cover - dependency may be absent in CI
-    tinker_get_renderer = None
-    tinker_get_tokenizer = None
-    TinkerTokenCompleter = None
+from tinker_cookbook import get_renderer as tinker_get_renderer, get_tokenizer as tinker_get_tokenizer
+from tinker_cookbook.completers import TinkerTokenCompleter
 
 try:  # Python 3.11+
     import tomllib
@@ -276,8 +271,7 @@ class Trainer:
         if self.renderer is not None:
             return
         self._ensure_tokenizer()
-        if tinker_get_renderer is not None:
-            self.renderer = tinker_get_renderer(self.config.base_model)
+        self.renderer = tinker_get_renderer(self.config.base_model)
 
     def _flatten_model_input_tokens(self, model_input: Any) -> list[int]:
         tokens: list[int] = []
@@ -386,11 +380,6 @@ class Trainer:
 
             model_input, prompt_tokens = self._render_prompt(prompt)
             stop_sequences = self.renderer.get_stop_sequences()
-
-            if TinkerTokenCompleter is None:
-                raise RuntimeError(
-                    "tinker_cookbook is required for sampling. Please install tinker-cookbook."
-                )
 
             completion_texts: list[str] = []
             completion_data: list[dict[str, Any]] = []
