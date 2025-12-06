@@ -9,6 +9,8 @@ on:
 jobs:
   test-cpu:
     runs-on: ubuntu-latest
+    env:
+      TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
