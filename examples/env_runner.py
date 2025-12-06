@@ -40,7 +40,8 @@ def install_dependencies():
     run_cmd(["pip", "install", "tinker"], "Installing Tinker SDK")
 
     run_cmd(["pip", "install", "tinker_cookbook"], "Installing tinker_cookbook")
-
+    
+    utils_path = ROOT_DIR / "custom_utils"
     run_cmd(["pip", "install", "-e", str(utils_path)], "Installing custom_utils")
 
 
