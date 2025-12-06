@@ -276,11 +276,8 @@ class Trainer:
         if self.renderer is not None:
             return
         self._ensure_tokenizer()
-        if tinker_get_renderer is None:
-            raise RuntimeError(
-                "tinker_cookbook is required for rendering. Please install tinker-cookbook."
-            )
-        self.renderer = tinker_get_renderer(self.config.base_model)
+        if tinker_get_renderer is not None:
+            self.renderer = tinker_get_renderer(self.config.base_model)
 
     def _flatten_model_input_tokens(self, model_input: Any) -> list[int]:
         tokens: list[int] = []
