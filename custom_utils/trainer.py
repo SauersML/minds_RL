@@ -29,6 +29,56 @@ State = MutableMapping[str, Any]
 RendererType = Any
 
 
+class SamplingClientAdapter:
+    def __init__(self, client: Any, tokenizer: Any) -> None:
+        self.client = client
+        self.tokenizer = tokenizer
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.client, name)
+
+    async def compute_logprobs_async(self, prompt: str, targets: Sequence[str] | None = None) -> Any:
+        if not targets:
+            return await self.client.compute_logprobs_async(prompt=prompt)
+
+        target = targets[0]
+        full_text = prompt + target
+
+        result = await self.client.compute_logprobs_async(prompt=full_text)
+
+        logprobs = None
+        if isinstance(result, Mapping):
+            if "prompt_logprobs" in result:
+                logprobs = result["prompt_logprobs"]
+        elif hasattr(result, "prompt_logprobs"):
+            logprobs = result.prompt_logprobs
+
+        if logprobs is not None:
+            offset = 0
+            if hasattr(self.tokenizer, "encode"):
+                try:
+                    tokens = self.tokenizer.encode(prompt, add_special_tokens=False)
+                    offset = len(tokens)
+                except Exception:
+                    pass
+
+            target_segment = logprobs[offset:]
+            total = 0.0
+            for item in target_segment:
+                val = 0.0
+                if isinstance(item, (int, float)):
+                    val = float(item)
+                elif isinstance(item, Mapping):
+                    val = float(item.get("logprob", 0.0))
+                elif hasattr(item, "logprob"):
+                    val = float(item.logprob)
+                total += val
+
+            return {"total_logprob": total}
+
+        return result
+
+
 @dataclass
 class TrainerConfig:
     base_model: str
@@ -61,6 +111,10 @@ class Trainer:
         def decode(self, tokens: Sequence[int], skip_special_tokens: bool = True):
             del skip_special_tokens
             return " ".join(str(token) for token in tokens)
+
+        def encode(self, text: str, add_special_tokens: bool = True):
+            del add_special_tokens
+            return [1] * (len(text) // 4 + 1)
 
     class _DummyTinker:
         """Minimal stand-in for the tinker SDK to keep CI tests offline."""
@@ -296,6 +350,10 @@ class Trainer:
         return model_input, prompt_tokens
 
     async def _prepare_sampling_client(self, training_client: Any, service_client: Any, step: int) -> Any:
+        client = await self._prepare_sampling_client_inner(training_client, service_client, step)
+        return SamplingClientAdapter(client, self.tokenizer)
+
+    async def _prepare_sampling_client_inner(self, training_client: Any, service_client: Any, step: int) -> Any:
         step_name = f"step_{step}"
 
         saver = getattr(training_client, "save_weights_and_get_sampling_client", None)
@@ -541,12 +599,13 @@ class Trainer:
                     if callable(optim_fn)
                     else training_client.optim_step(adam_params)
                 )
-                training_task = asyncio.create_task(
-                    asyncio.gather(
+                async def _background_step() -> None:
+                    await asyncio.gather(
                         self._maybe_await(forward),
                         self._maybe_await(optim),
                     )
-                )
+
+                training_task = asyncio.create_task(_background_step())
                 if pending_training_task is not None:
                     await pending_training_task
                 pending_training_task = training_task
