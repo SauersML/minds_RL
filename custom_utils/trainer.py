@@ -397,7 +397,7 @@ class Trainer:
                 if stop_sequences:
                     sample_kwargs["stop"] = stop_sequences
 
-            completions = await sampling_client.sample(**sample_kwargs)
+            completions = await sampling_client.sample_async(**sample_kwargs)
 
             completion_texts: list[str] = []
             completion_data: list[dict[str, Any]] = []
