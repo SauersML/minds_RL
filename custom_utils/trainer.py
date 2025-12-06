@@ -54,18 +54,53 @@ class SamplingClientAdapter:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
 
-    async def sample_async(self, prompt: Any, **kwargs: Any) -> Any:
-        if isinstance(prompt, str):
-            try:
-                import tinker
+    def _model_input_from_text(self, text: Any) -> Any:
+        """Convert raw text into a ModelInput using the configured tokenizer.
 
-                if hasattr(self._tokenizer, "encode"):
-                    tokens = self._tokenizer.encode(prompt, add_special_tokens=False)
-                    prompt = tinker.ModelInput.from_ints(tokens)
-            except ImportError:
-                pass
+        The Tinker SDK requires prompts to be instances of ``ModelInput``. This helper
+        performs the conversion and raises a clear error instead of silently passing
+        through invalid types, which previously led to Pydantic validation errors.
+        """
+
+        if not isinstance(text, str):
+            return text
+
+        model_input_cls = None
+        try:
+            import tinker
+
+            model_input_cls = getattr(tinker, "ModelInput", None)
+        except ImportError as exc:  # pragma: no cover - handled by dummy SDK in tests
+            # Fall back to the lightweight dummy SDK shipped with Trainer for offline
+            # execution. If neither is available, surface a clear error instead of
+            # silently returning a raw string.
+            try:
+                from custom_utils import trainer as trainer_module
+
+                model_input_cls = getattr(getattr(trainer_module, "Trainer", None), "_DummyTinker", None)
+                model_input_cls = getattr(model_input_cls, "ModelInput", None) if model_input_cls else None
             except Exception:
-                pass
+                model_input_cls = None
+
+            if model_input_cls is None:
+                raise RuntimeError("tinker package is required to convert prompt text to ModelInput") from exc
+
+        if not hasattr(self._tokenizer, "encode"):
+            raise TypeError("Tokenizer must implement an 'encode' method to build ModelInput prompts")
+
+        try:
+            tokens = self._tokenizer.encode(text, add_special_tokens=False)
+            return model_input_cls.from_ints(tokens)
+        except Exception as exc:  # pragma: no cover - defensive: mirrors SDK expectations
+            raise ValueError("Failed to convert prompt text to a ModelInput") from exc
+
+    async def sample_async(self, prompt: Any, **kwargs: Any) -> Any:
+        prompt = self._model_input_from_text(prompt)
+
+        if isinstance(prompt, str):
+            raise TypeError(
+                "Failed to convert prompt text to ModelInput before sampling; received raw string"
+            )
 
         if hasattr(self._client, "sample_async"):
             return await self._client.sample_async(prompt=prompt, **kwargs)
@@ -81,13 +116,23 @@ class SamplingClientAdapter:
     async def compute_logprobs_async(
         self, prompt: str, targets: Sequence[str] | None = None, **kwargs: Any
     ) -> Any:
+        prompt_input = self._model_input_from_text(prompt)
+        if isinstance(prompt_input, str):
+            raise TypeError(
+                "Failed to convert prompt text to ModelInput before computing logprobs"
+            )
         if not targets:
-            return await self._client.compute_logprobs_async(prompt=prompt, **kwargs)
+            return await self._client.compute_logprobs_async(prompt=prompt_input, **kwargs)
 
         results = []
         for target in targets:
             full_text = prompt + target
-            result = await self._client.compute_logprobs_async(prompt=full_text, **kwargs)
+            full_prompt_input = self._model_input_from_text(full_text)
+            if isinstance(full_prompt_input, str):
+                raise TypeError(
+                    "Failed to convert prompt+target text to ModelInput before computing logprobs"
+                )
+            result = await self._client.compute_logprobs_async(prompt=full_prompt_input, **kwargs)
 
             # Try to extract a sequence of logprobs from the result
             logprobs_seq = None
