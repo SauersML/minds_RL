@@ -342,6 +342,7 @@ def load_environment(num_examples: int = 5000, **kwargs: Any) -> vf.SingleTurnEn
 
     parser = SelfPredictionParser()
     rubric = _build_rubric(parser)
+    rubric.parser = parser
     items = _generate_arithmetic_items(sample_count=sample_count)
     dataset = Dataset.from_list(_build_dataset(items))
     return vf.SingleTurnEnv(

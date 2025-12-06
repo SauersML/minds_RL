@@ -201,6 +201,7 @@ def load_environment(num_examples: int = 5000, **kwargs: Any) -> GhostTraceEnv:
         raise ValueError("num_examples must be positive")
     parser = GhostTraceParser()
     rubric = _build_rubric(parser)
+    rubric.parser = parser
     dataset_list = _build_dataset(count)
     dataset = Dataset.from_list(dataset_list)
     return GhostTraceEnv(dataset=dataset, parser=parser, rubric=rubric, **kwargs)
