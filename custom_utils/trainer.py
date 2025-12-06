@@ -497,20 +497,37 @@ class Trainer:
                 if not combined_tokens:
                     continue
 
-                target_tokens = completion_tokens
-                advantage_full = np.full(target_tokens.shape, float(advantage), dtype=np.float32)
+                # Tinker requires loss inputs to match the full model_input length
+                total_len = len(combined_tokens)
+                prompt_len = len(prompt_tokens)
+
+                # Targets are the full sequence
+                full_targets = np.array(combined_tokens, dtype=np.int64)
+
+                # Initialize arrays for full sequence
+                full_advantages = np.zeros(total_len, dtype=np.float32)
+                full_logprobs = np.zeros(total_len, dtype=np.float32)
+
+                # Fill the completion region (masking prompt region with 0s)
+                # Ensure dimensions match in case of truncation elsewhere
+                comp_len = len(completion_tokens)
+                full_advantages[prompt_len : prompt_len + comp_len] = float(advantage)
+                full_logprobs[prompt_len : prompt_len + comp_len] = logprob_array
 
                 if self.config.loss_fn == "cross_entropy":
-                    weights = np.ones_like(target_tokens, dtype=np.float32)
+                    # For SL, use weights tensor for masking
+                    full_weights = np.zeros(total_len, dtype=np.float32)
+                    full_weights[prompt_len : prompt_len + comp_len] = 1.0
                     loss_fn_inputs = {
-                        "target_tokens": tinker.TensorData.from_numpy(target_tokens),
-                        "weights": tinker.TensorData.from_numpy(weights),
+                        "target_tokens": tinker.TensorData.from_numpy(full_targets),
+                        "weights": tinker.TensorData.from_numpy(full_weights),
                     }
                 else:
+                    # For RL, masking is implicit via 0.0 advantage
                     loss_fn_inputs = {
-                        "target_tokens": tinker.TensorData.from_numpy(target_tokens),
-                        "logprobs": tinker.TensorData.from_numpy(logprob_array),
-                        "advantages": tinker.TensorData.from_numpy(advantage_full),
+                        "target_tokens": tinker.TensorData.from_numpy(full_targets),
+                        "logprobs": tinker.TensorData.from_numpy(full_logprobs),
+                        "advantages": tinker.TensorData.from_numpy(full_advantages),
                     }
 
                 datums.append(
