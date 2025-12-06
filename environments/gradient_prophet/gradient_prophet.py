@@ -98,12 +98,16 @@ async def _target_logprob_async(client: Any, prompt: str, target: str) -> float 
 
 
 async def _prompt_distributions(client: Any, prompt: str) -> list[dict[str, float]]:
+    # Tinker requires max_tokens to be inside SamplingParams
+    import tinker
+    params = tinker.SamplingParams(max_tokens=1)
+
     request = {
         "prompt": prompt,
         "num_samples": 1,
         "include_prompt_logprobs": True,
         "topk_prompt_logprobs": 10,
-        "max_tokens": 1,
+        "sampling_params": params,
     }
     if hasattr(client, "sample_async"):
         response = await client.sample_async(**request)  # type: ignore[attr-defined]
@@ -257,9 +261,7 @@ class GradientProphetEnv(Env):
     def initial_observation(self) -> str:
         return str(self.sample.get("prompt", ""))
 
-    async def step(self, action: Any, sampling_client: Any | None = None) -> StepResult:  # type: ignore[override]
-        if sampling_client is not None:
-            self.sampling_client = sampling_client
+    async def step(self, action: Any) -> StepResult:  # type: ignore[override]
         reward = await self._evaluate_reward(action)
         return StepResult(observation=None, reward=reward, done=True, info={"task": self.sample.get("task")})
 
