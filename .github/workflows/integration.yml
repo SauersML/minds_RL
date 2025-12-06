@@ -24,7 +24,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-integration-${{ hashFiles('**/pyproject.toml') }}
+          # Cache only downloaded third-party artifacts (tinker, tinker_cookbook, verifiers, torch)
+          # and avoid caching editable/local environment installs.
+          key: ${{ runner.os }}-pip-integration-${{ hashFiles('.github/workflows/integration.yml') }}
           restore-keys: |
             ${{ runner.os }}-pip-integration-
 
