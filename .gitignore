@@ -5,3 +5,5 @@ build/
 # Bundler directories
 .bundle/
 Gemfile.lock
+*.pyc
+__pycache__/
