@@ -15,11 +15,11 @@ import numpy as np
 
 try:
     from tinker_cookbook import get_renderer as tinker_get_renderer, get_tokenizer as tinker_get_tokenizer
+    from tinker_cookbook.completers import TinkerTokenCompleter
 except ImportError:  # pragma: no cover - dependency may be absent in CI
     tinker_get_renderer = None
     tinker_get_tokenizer = None
-
-from .renderer import ChatRenderer
+    TinkerTokenCompleter = None
 
 try:  # Python 3.11+
     import tomllib
@@ -226,12 +226,13 @@ class Trainer:
         self._tinker_module = importlib.import_module("tinker")
         return self._tinker_module
 
-    def _build_clients(self) -> tuple[Any, Any, Any]:
+    async def _build_clients(self) -> tuple[Any, Any, Any]:
         tinker = self._require_tinker()
         service_client = tinker.ServiceClient(
             api_key=self.config.tinker_api_key,
         )
-        training_client = service_client.create_lora_training_client(
+        # Use the async version to prevent blocking the event loop
+        training_client = await service_client.create_lora_training_client_async(
             base_model=self.config.base_model,
             rank=self.config.training_rank,
         )
@@ -275,20 +276,30 @@ class Trainer:
         if self.renderer is not None:
             return
         self._ensure_tokenizer()
-        try:
-            if tinker_get_renderer is not None:
-                self.renderer = tinker_get_renderer(self.config.base_model)
-                return
-        except Exception:
-            pass
+        if tinker_get_renderer is None:
+            raise RuntimeError(
+                "tinker_cookbook is required for rendering. Please install tinker-cookbook."
+            )
+        self.renderer = tinker_get_renderer(self.config.base_model)
 
-        self.renderer = ChatRenderer(self.tokenizer, base_model=self.config.base_model)
+    def _flatten_model_input_tokens(self, model_input: Any) -> list[int]:
+        tokens: list[int] = []
+        chunks = getattr(model_input, "chunks", [])
+        for chunk in chunks:
+            chunk_tokens = getattr(chunk, "tokens", None)
+            if isinstance(chunk_tokens, list):
+                tokens.extend(int(tok) for tok in chunk_tokens)
+        return tokens
 
-    def _build_model_input(self, prompt: str) -> tuple[list[int], Any]:
+    def _render_prompt(self, prompt: str) -> tuple[Any, list[int]]:
         self._ensure_renderer()
         tinker = self._require_tinker()
-        prompt_ids = self.renderer.build_generation_prompt(prompt)
-        return list(prompt_ids), tinker.ModelInput.from_ints(prompt_ids)
+        messages = [{"role": "user", "content": prompt}]
+        model_input = self.renderer.build_generation_prompt(messages)
+        if not isinstance(model_input, tinker.ModelInput):
+            model_input = tinker.ModelInput.from_ints(list(model_input))
+        prompt_tokens = self._flatten_model_input_tokens(model_input)
+        return model_input, prompt_tokens
 
     async def _prepare_sampling_client(self, training_client: Any, service_client: Any, step: int) -> Any:
         step_name = f"step_{step}"
@@ -336,8 +347,10 @@ class Trainer:
 
         rewards: list[float] = []
         metrics_history: list[dict[str, float | int]] = []
+        pending_training_task: asyncio.Task[Any] | None = None
 
-        tinker, service_client, training_client = self._build_clients()
+        # Await the async client builder
+        tinker, service_client, training_client = await self._build_clients()
         self._ensure_tokenizer()
 
         dataset = getattr(self.env, "dataset", None)
@@ -374,75 +387,42 @@ class Trainer:
             if not isinstance(prompt, str):
                 continue
 
-            prompt_tokens, model_input = self._build_model_input(prompt)
-            stop_sequences = self.renderer.get_stop_sequences() if self.renderer else []
+            model_input, prompt_tokens = self._render_prompt(prompt)
+            stop_sequences = self.renderer.get_stop_sequences()
 
-            sampling_params = None
-            try:
-                sampling_params = tinker.SamplingParams(
-                    max_tokens=self.config.max_new_tokens,
-                    stop=stop_sequences if stop_sequences else None,
+            if TinkerTokenCompleter is None:
+                raise RuntimeError(
+                    "tinker_cookbook is required for sampling. Please install tinker-cookbook."
                 )
-            except Exception:
-                sampling_params = None
-
-            sample_kwargs: dict[str, Any] = {
-                "prompt": model_input,
-                "num_samples": self.config.rollouts_per_example,
-            }
-            if sampling_params is not None:
-                sample_kwargs["sampling_params"] = sampling_params
-            else:
-                sample_kwargs["max_tokens"] = self.config.max_new_tokens
-                if stop_sequences:
-                    sample_kwargs["stop"] = stop_sequences
-
-            completions = await sampling_client.sample_async(**sample_kwargs)
 
             completion_texts: list[str] = []
             completion_data: list[dict[str, Any]] = []
-            sequences = getattr(completions, "sequences", None)
-            payload = sequences if sequences is not None else completions
-            for completion in payload or []:
-                tokens = None
-                logprobs = None
-                text_val = None
-                if isinstance(completion, Mapping):
-                    tokens = completion.get("tokens")
-                    logprobs = completion.get("logprobs")
-                    text_val = completion.get("text") or completion.get("completion")
-                if tokens is None:
-                    tokens = getattr(completion, "tokens", None)
-                if logprobs is None:
-                    logprobs = getattr(completion, "logprobs", None)
-                if text_val is None:
-                    text_val = getattr(completion, "text", None)
-                if text_val is None and isinstance(completion, str):
-                    text_val = completion
-                if text_val is None and tokens is not None and self.tokenizer is not None:
-                    try:
-                        text_val = self.tokenizer.decode(tokens, skip_special_tokens=True)
-                    except Exception:  # pragma: no cover - best effort
-                        text_val = None
-                if text_val is None or tokens is None:
-                    continue
+            for _ in range(self.config.rollouts_per_example):
+                completer = TinkerTokenCompleter(
+                    sampling_client=sampling_client,
+                    max_tokens=self.config.max_new_tokens,
+                )
+                tokens_with_logprobs = await completer(model_input, stop_sequences)
 
-                completion_texts.append(text_val)
-                cleaned_logprobs: list[float] = []
-                if isinstance(logprobs, Sequence):
-                    for lp in logprobs:
-                        if lp is None:
-                            cleaned_logprobs.append(0.0)
-                        elif isinstance(lp, Mapping):
-                            lp_val = lp.get("logprob") or lp.get("total_logprob")
-                            cleaned_logprobs.append(float(lp_val) if lp_val is not None else 0.0)
-                        else:
-                            cleaned_logprobs.append(float(lp))
+                completion_tokens = tokens_with_logprobs.tokens
+                logprobs = tokens_with_logprobs.logprobs
+
+                try:
+                    completion_text = (
+                        self.tokenizer.decode(completion_tokens, skip_special_tokens=True)
+                        if self.tokenizer is not None
+                        else ""
+                    )
+                except Exception:
+                    completion_text = ""
+
+                completion_texts.append(completion_text)
                 completion_data.append(
                     {
-                        "text": text_val,
-                        "tokens": list(tokens) if isinstance(tokens, Sequence) else tokens,
-                        "logprobs": cleaned_logprobs,
+                        "text": completion_text,
+                        "tokens": completion_tokens,
+                        "logprobs": logprobs,
+                        "prompt_tokens": prompt_tokens,
                     }
                 )
 
@@ -481,12 +461,7 @@ class Trainer:
                     step_callable = getattr(env, "step", None)
                     if not callable(step_callable):
                         continue
-                    try:
-                        step_result = step_callable(
-                            completion_text, sampling_client=sampling_client
-                        )
-                    except TypeError:
-                        step_result = step_callable(completion_text)
+                    step_result = step_callable(completion_text)
                     step_result = await self._maybe_await(step_result)
                     reward_value = step_result.reward if isinstance(step_result, Mapping) else getattr(step_result, "reward", 0.0)
                     try:
@@ -510,6 +485,7 @@ class Trainer:
             for data, advantage in zip(completion_data, advantages):
                 completion_tokens = np.asarray(data.get("tokens", []), dtype=np.int64)
                 logprob_array = np.asarray(data.get("logprobs", []), dtype=np.float32)
+                prompt_tokens = np.asarray(data.get("prompt_tokens", []), dtype=np.int64)
                 if completion_tokens.size == 0 or logprob_array.size == 0:
                     continue
                 if logprob_array.shape[0] != completion_tokens.shape[0]:
@@ -517,41 +493,25 @@ class Trainer:
                     completion_tokens = completion_tokens[:min_len]
                     logprob_array = logprob_array[:min_len]
 
-                combined_tokens = list(prompt_tokens) + completion_tokens.tolist()
-                if len(combined_tokens) < 2:
+                combined_tokens = prompt_tokens.tolist() + completion_tokens.tolist()
+                if not combined_tokens:
                     continue
 
-                target_tokens = np.asarray(combined_tokens[1:], dtype=np.int64)
-                total_length = target_tokens.shape[0]
-                prompt_target_len = max(len(prompt_tokens) - 1, 0)
+                target_tokens = completion_tokens
+                advantage_full = np.full(target_tokens.shape, float(advantage), dtype=np.float32)
 
-                logprob_full = np.zeros(total_length, dtype=np.float32)
-                completion_start = prompt_target_len
-                comp_token_len = min(
-                    completion_tokens.shape[0], total_length - completion_start
-                )
-                comp_logprob_len = min(logprob_array.shape[0], comp_token_len)
-                if comp_logprob_len > 0:
-                    logprob_full[completion_start : completion_start + comp_logprob_len] = (
-                        logprob_array[:comp_logprob_len]
-                    )
-
-                advantage_full = np.zeros(total_length, dtype=np.float32)
-                if comp_token_len > 0:
-                    advantage_full[completion_start : completion_start + comp_token_len] = float(
-                        advantage
-                    )
-
-                weights = np.zeros(total_length, dtype=np.float32)
-                if comp_token_len > 0:
-                    weights[completion_start : completion_start + comp_token_len] = 1.0
-
-                loss_fn_inputs = {
-                    "target_tokens": tinker.TensorData.from_numpy(target_tokens),
-                    "logprobs": tinker.TensorData.from_numpy(logprob_full),
-                    "advantages": tinker.TensorData.from_numpy(advantage_full),
-                    "weights": tinker.TensorData.from_numpy(weights),
-                }
+                if self.config.loss_fn == "cross_entropy":
+                    weights = np.ones_like(target_tokens, dtype=np.float32)
+                    loss_fn_inputs = {
+                        "target_tokens": tinker.TensorData.from_numpy(target_tokens),
+                        "weights": tinker.TensorData.from_numpy(weights),
+                    }
+                else:
+                    loss_fn_inputs = {
+                        "target_tokens": tinker.TensorData.from_numpy(target_tokens),
+                        "logprobs": tinker.TensorData.from_numpy(logprob_array),
+                        "advantages": tinker.TensorData.from_numpy(advantage_full),
+                    }
 
                 datums.append(
                     tinker.Datum(
@@ -575,12 +535,23 @@ class Trainer:
                     if callable(optim_fn)
                     else training_client.optim_step(adam_params)
                 )
-                await asyncio.gather(self._maybe_await(forward), self._maybe_await(optim))
+                training_task = asyncio.create_task(
+                    asyncio.gather(
+                        self._maybe_await(forward),
+                        self._maybe_await(optim),
+                    )
+                )
+                if pending_training_task is not None:
+                    await pending_training_task
+                pending_training_task = training_task
 
             reward_mean = baseline
             rewards.append(reward_mean)
             metrics_history.append({"reward": reward_mean, "loss": 0.0, "step": step})
             metrics_path.write_text(json.dumps(metrics_history, indent=2))
+
+        if pending_training_task is not None:
+            await pending_training_task
 
         metrics = {
             "reward": sum(rewards) / len(rewards) if rewards else 0.0,
