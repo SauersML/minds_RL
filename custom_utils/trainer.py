@@ -35,56 +35,6 @@ State = MutableMapping[str, Any]
 RendererType = Any
 
 
-class SamplingClientAdapter:
-    def __init__(self, client: Any, tokenizer: Any) -> None:
-        self.client = client
-        self.tokenizer = tokenizer
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.client, name)
-
-    async def compute_logprobs_async(self, prompt: str, targets: Sequence[str] | None = None) -> Any:
-        if not targets:
-            return await self.client.compute_logprobs_async(prompt=prompt)
-
-        target = targets[0]
-        full_text = prompt + target
-
-        result = await self.client.compute_logprobs_async(prompt=full_text)
-
-        logprobs = None
-        if isinstance(result, Mapping):
-            if "prompt_logprobs" in result:
-                logprobs = result["prompt_logprobs"]
-        elif hasattr(result, "prompt_logprobs"):
-            logprobs = result.prompt_logprobs
-
-        if logprobs is not None:
-            offset = 0
-            if hasattr(self.tokenizer, "encode"):
-                try:
-                    tokens = self.tokenizer.encode(prompt, add_special_tokens=False)
-                    offset = len(tokens)
-                except Exception:
-                    pass
-
-            target_segment = logprobs[offset:]
-            total = 0.0
-            for item in target_segment:
-                val = 0.0
-                if isinstance(item, (int, float)):
-                    val = float(item)
-                elif isinstance(item, Mapping):
-                    val = float(item.get("logprob", 0.0))
-                elif hasattr(item, "logprob"):
-                    val = float(item.logprob)
-                total += val
-
-            return {"total_logprob": total}
-
-        return result
-
-
 @dataclass
 class TrainerConfig:
     base_model: str
@@ -103,6 +53,30 @@ class SamplingClientAdapter:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
+
+    async def sample_async(self, prompt: Any, **kwargs: Any) -> Any:
+        if isinstance(prompt, str):
+            try:
+                import tinker
+
+                if hasattr(self._tokenizer, "encode"):
+                    tokens = self._tokenizer.encode(prompt, add_special_tokens=False)
+                    prompt = tinker.ModelInput.from_ints(tokens)
+            except ImportError:
+                pass
+            except Exception:
+                pass
+
+        if hasattr(self._client, "sample_async"):
+            return await self._client.sample_async(prompt=prompt, **kwargs)
+
+        if hasattr(self._client, "sample"):
+            result = self._client.sample(prompt=prompt, **kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        raise AttributeError(f"'{type(self._client).__name__}' object has no attribute 'sample_async' or 'sample'")
 
     async def compute_logprobs_async(
         self, prompt: str, targets: Sequence[str] | None = None, **kwargs: Any
