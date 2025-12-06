@@ -31,6 +31,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
+      - name: Install tinker dependency
+        run: |
+          pip install tinker
+
       - name: Install local packages with test extras
         run: |
           pip install --no-build-isolation verifiers
