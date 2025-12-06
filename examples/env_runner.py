@@ -11,7 +11,7 @@ TINKER_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
 MAX_STEPS = 1
 ROLLOUTS = 2
 MAX_TOKENS = 10
-ROOT_DIR = Path(os.getcwd())
+ROOT_DIR = Path(os.getcwd()) / ".."
 
 def print_header(msg):
     print(f"\n{'='*60}\n🚀 {msg}\n{'='*60}")
