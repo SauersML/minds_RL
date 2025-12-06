@@ -1,7 +1,6 @@
 import os
 import sys
 import subprocess
-import shutil
 import time
 from pathlib import Path
 import importlib
@@ -28,7 +27,7 @@ def run_cmd(cmd, description):
             stdout=subprocess.DEVNULL, 
             stderr=subprocess.DEVNULL
         )
-        print(f"   ✅ Done.")
+        print("   ✅ Done.")
     except subprocess.CalledProcessError:
         print(f"   ❌ Failed to execute: {' '.join(cmd)}")
         sys.exit(1)
@@ -116,11 +115,11 @@ def run_integration_test(env_path):
     generate_config(env_path, config_file)
 
     try:
-        print(f"   ⚙️  Configuring Trainer...")
+        print("   ⚙️  Configuring Trainer...")
         trainer = Trainer.from_config(config_file)
         
         print(f"   ⚡ Sending Job to Tinker (Steps: {MAX_STEPS})...")
-        metrics = trainer.train(max_steps=MAX_STEPS, output_dir=run_dir)
+        trainer.train(max_steps=MAX_STEPS, output_dir=run_dir)
         
         # Validation
         metrics_file = run_dir / "metrics.json"
