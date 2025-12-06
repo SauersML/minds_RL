@@ -212,96 +212,6 @@ class Trainer:
                 logprobs = [0.0, 0.0, 0.0]
             return DummyTokens()
 
-    class _DummyTinker:
-        """Minimal stand-in for the tinker SDK to keep CI tests offline."""
-
-        class TensorData:
-            @classmethod
-            def from_numpy(cls, array: Any) -> Any:
-                return array
-
-        class ModelInput:
-            @classmethod
-            def from_ints(cls, values: Sequence[int]) -> Sequence[int]:
-                return list(values)
-
-        class Datum:
-            def __init__(self, model_input: Any, loss_fn_inputs: Mapping[str, Any]):
-                self.model_input = model_input
-                self.loss_fn_inputs = loss_fn_inputs
-
-        class AdamParams:
-            def __init__(self, learning_rate: float = 0.0):
-                self.learning_rate = learning_rate
-
-        class _Completions:
-            def __init__(self, texts: Sequence[str]):
-                self.sequences = [
-                    {
-                        "text": text,
-                        "tokens": [0, 1, 2],
-                        "logprobs": [0.0, 0.0, 0.0],
-                    }
-                    for text in texts
-                ]
-
-        class SamplingParams:
-            def __init__(self, max_tokens: int = 10, stop: Sequence[str] | None = None):
-                self.max_tokens = max_tokens
-                self.stop = stop
-
-        class ServiceClient:
-            def __init__(self, api_key: str | None = None, *, base_model: str | None = None):
-                self.base_model = base_model
-                self.api_key = api_key
-
-            def create_lora_training_client(self, base_model: str, rank: int = 32):
-                return Trainer._DummyTinker.TrainingClient(base_model, rank)
-
-            async def create_lora_training_client_async(self, base_model: str, rank: int = 32):
-                return Trainer._DummyTinker.TrainingClient(base_model, rank)
-
-            def create_sampling_client(self, base_model: str, **_: Any):
-                return Trainer._DummyTinker.SamplingClient(base_model)
-
-            async def sample(
-                self,
-                prompt: Any,
-                num_samples: int = 1,
-                sampling_params: "Trainer._DummyTinker.SamplingParams" | None = None,
-                **_: Any,
-            ):
-                del prompt, sampling_params
-                return Trainer._DummyTinker._Completions(["dummy response"] * num_samples)
-
-        class SamplingClient(ServiceClient):
-            def __init__(self, base_model: str):
-                super().__init__(base_model=base_model)
-
-        class TrainingClient(ServiceClient):
-            def __init__(self, base_model: str, rank: int):
-                super().__init__(base_model=base_model)
-                self.rank = rank
-
-            def save_weights_for_sampler(self, name: str):
-                del name
-                return Trainer._DummyTinker.SamplingClient(self.base_model)
-
-            async def forward_backward_async(self, datums: Sequence[Any], loss_fn: str = "importance_sampling"):
-                del datums, loss_fn
-                return None
-
-            def forward_backward(self, datums: Sequence[Any], loss_fn: str = "importance_sampling"):
-                del datums, loss_fn
-                return None
-
-            async def optim_step_async(self, params: Any):
-                del params
-                return None
-
-            def optim_step(self, params: Any):
-                del params
-                return None
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -371,8 +281,10 @@ class Trainer:
             return self._tinker_module
         spec = importlib.util.find_spec("tinker")
         if spec is None:
-            self._tinker_module = self._DummyTinker()
-            return self._tinker_module
+            raise ModuleNotFoundError(
+                "The 'tinker' package is required for training; install it and ensure "
+                "network access before running the trainer."
+            )
         self._tinker_module = importlib.import_module("tinker")
         return self._tinker_module
 
@@ -391,8 +303,6 @@ class Trainer:
         return tinker, service_client, training_client
 
     def _ensure_tokenizer(self) -> None:
-        if self.tokenizer is not None:
-            return
         if self.tokenizer is not None:
             return
         try:
