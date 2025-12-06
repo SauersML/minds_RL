@@ -703,8 +703,8 @@ class Trainer:
                         self._maybe_await(forward),
                         self._maybe_await(optim),
                     )
+                )
 
-                training_task = asyncio.create_task(_background_step())
                 if pending_training_task is not None:
                     await pending_training_task
                 pending_training_task = training_task

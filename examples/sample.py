@@ -1,5 +1,4 @@
 import tinker
-import os
 
 try:
     print("🔌 Connecting to Tinker...")
