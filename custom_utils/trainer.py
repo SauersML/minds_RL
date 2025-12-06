@@ -176,6 +176,7 @@ class Trainer:
         self.training_client = None
         self.tokenizer = None
         self.renderer: RendererType | None = None
+        self._wandb_run: Any | None = None
 
     class _DummyTokenizer:
         """Lightweight tokenizer used when transformers models are unavailable."""
@@ -411,6 +412,95 @@ class Trainer:
 
         return SamplingClientAdapter(sampling_client, self.tokenizer)
 
+    def _start_wandb(self, output_path: Path) -> None:
+        if self._wandb_run is not None:
+            return
+
+        api_key = os.getenv("WANDB_API_KEY")
+        if not api_key:
+            return
+
+        spec = importlib.util.find_spec("wandb")
+        if spec is None:
+            print("Weights & Biases not installed; skipping external logging.")
+            return
+
+        wandb = importlib.import_module("wandb")
+        wandb.login(key=api_key, relogin=True)
+
+        project = os.getenv("WANDB_PROJECT", "minds-rl")
+        entity = os.getenv("WANDB_ENTITY")
+        config = {
+            "base_model": self.config.base_model,
+            "rollouts_per_example": self.config.rollouts_per_example,
+            "loss_fn": self.config.loss_fn,
+            "training_rank": self.config.training_rank,
+            "learning_rate": self.config.learning_rate,
+        }
+
+        self._wandb_run = wandb.init(
+            project=project,
+            entity=entity,
+            config=config,
+            dir=str(output_path),
+            reinit=True,
+        )
+
+    def _log_external_metrics(self, metrics: Mapping[str, Any]) -> None:
+        if self._wandb_run is None:
+            return
+        try:
+            self._wandb_run.log(dict(metrics))
+        except Exception:
+            # External logging should never break the training loop
+            pass
+
+    def _finish_wandb(self) -> None:
+        if self._wandb_run is None:
+            return
+        try:
+            self._wandb_run.finish()
+        finally:
+            self._wandb_run = None
+
+    def _write_job_summary(self, metrics_history: Sequence[Mapping[str, Any]], output_path: Path) -> None:
+        summary_path = os.getenv("GITHUB_STEP_SUMMARY")
+        if not summary_path:
+            return
+
+        summary_file = Path(summary_path)
+        if not summary_file.parent.exists():
+            summary_file.parent.mkdir(parents=True, exist_ok=True)
+
+        step_metrics = [m for m in metrics_history if "step" in m]
+        rewards = [float(m.get("reward", 0.0)) for m in step_metrics]
+        losses = [float(m.get("loss", 0.0)) for m in step_metrics]
+
+        avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
+        max_reward = max(rewards) if rewards else 0.0
+        final_reward = rewards[-1] if rewards else 0.0
+        final_loss = losses[-1] if losses else 0.0
+
+        lines = [
+            "## Training Summary",
+            "",
+            f"Output directory: `{output_path}`",
+            "",
+            "| Metric | Value |",
+            "| --- | --- |",
+            f"| Steps | {len(step_metrics)} |",
+            f"| Average Reward | {avg_reward:.4f} |",
+            f"| Max Reward | {max_reward:.4f} |",
+            f"| Final Reward | {final_reward:.4f} |",
+            f"| Final Loss | {final_loss:.4f} |",
+            "",
+        ]
+
+        with summary_file.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
+            if not str(lines[-1]).endswith("\n"):
+                fh.write("\n")
+
     async def _train(self, *, max_steps: int = 1, output_dir: Path | str | None = None) -> dict[str, Any]:
         output_path = Path(output_dir) if output_dir is not None else Path("outputs")
         output_path.mkdir(parents=True, exist_ok=True)
@@ -429,6 +519,7 @@ class Trainer:
         # Await the async client builder
         tinker, service_client, training_client = await self._build_clients()
         self._ensure_tokenizer()
+        self._start_wandb(output_path)
 
         dataset = getattr(self.env, "dataset", None)
         steps = max(max_steps, 1)
@@ -437,10 +528,11 @@ class Trainer:
             return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
 
         try:
-            for step in range(steps):
-                sampling_client = await self._prepare_sampling_client(
-                    training_client, service_client, step
-                )
+            try:
+                for step in range(steps):
+                    sampling_client = await self._prepare_sampling_client(
+                        training_client, service_client, step
+                    )
 
                 envs: list[Any] = []
                 if hasattr(self.env, "build") and callable(getattr(self.env, "build")):
@@ -662,19 +754,23 @@ class Trainer:
                 rewards.append(reward_mean)
                 metrics_history.append({"reward": reward_mean, "loss": 0.0, "step": step})
                 metrics_path.write_text(json.dumps(metrics_history, indent=2))
+                    self._log_external_metrics({"step": step, "reward": reward_mean, "loss": 0.0})
+            finally:
+                log_file.close()
+
+            if pending_training_task is not None:
+                await pending_training_task
+
+            metrics = {
+                "reward": sum(rewards) / len(rewards) if rewards else 0.0,
+                "loss": 0.0,
+            }
+            metrics_history.append(metrics)
+            metrics_path.write_text(json.dumps(metrics_history, indent=2))
+            self._write_job_summary(metrics_history, output_path)
+            return metrics
         finally:
-            log_file.close()
-
-        if pending_training_task is not None:
-            await pending_training_task
-
-        metrics = {
-            "reward": sum(rewards) / len(rewards) if rewards else 0.0,
-            "loss": 0.0,
-        }
-        metrics_history.append(metrics)
-        metrics_path.write_text(json.dumps(metrics_history, indent=2))
-        return metrics
+            self._finish_wandb()
 
     def train(self, *, max_steps: int = 1, output_dir: Path | str | None = None) -> dict[str, Any]:
         return asyncio.run(self._train(max_steps=max_steps, output_dir=output_dir))

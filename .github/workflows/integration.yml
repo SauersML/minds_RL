@@ -9,7 +9,9 @@ jobs:
     env:
       TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
       # Optional: If your verifiers/models require HF access
-      HF_TOKEN: ${{ secrets.HF_TOKEN }} 
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+      WANDB_PROJECT: minds-rl
 
     steps:
       - name: Checkout repository
@@ -56,3 +58,10 @@ jobs:
         # This runs env_runner.py, which creates configs and calls Trainer.train()
         run: |
           python examples/env_runner.py
+
+      - name: Upload training artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-training-artifacts
+          path: runs/
