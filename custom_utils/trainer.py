@@ -98,31 +98,44 @@ class Trainer:
                     for text in texts
                 ]
 
+        class SamplingParams:
+            def __init__(self, max_tokens: int = 10, stop: Sequence[str] | None = None):
+                self.max_tokens = max_tokens
+                self.stop = stop
+
         class ServiceClient:
-            def __init__(self, base_model: str, api_key: str | None = None):
+            def __init__(self, api_key: str | None = None, *, base_model: str | None = None):
                 self.base_model = base_model
                 self.api_key = api_key
 
             def create_lora_training_client(self, base_model: str, rank: int = 32):
                 return Trainer._DummyTinker.TrainingClient(base_model, rank)
 
+            def create_sampling_client(self, base_model: str, **_: Any):
+                return Trainer._DummyTinker.SamplingClient(base_model)
+
             async def sample(
                 self,
                 prompt: Any,
                 num_samples: int = 1,
-                max_tokens: int = 10,
-                stop: Sequence[str] | None = None,
+                sampling_params: "Trainer._DummyTinker.SamplingParams" | None = None,
+                **_: Any,
             ):
-                del prompt, max_tokens, stop
+                del prompt, sampling_params
                 return Trainer._DummyTinker._Completions(["dummy response"] * num_samples)
+
+        class SamplingClient(ServiceClient):
+            def __init__(self, base_model: str):
+                super().__init__(base_model=base_model)
 
         class TrainingClient(ServiceClient):
             def __init__(self, base_model: str, rank: int):
-                super().__init__(base_model)
+                super().__init__(base_model=base_model)
                 self.rank = rank
 
-            def save_weights_for_sampler(self):
-                return self
+            def save_weights_for_sampler(self, name: str):
+                del name
+                return Trainer._DummyTinker.SamplingClient(self.base_model)
 
             async def forward_backward_async(self, datums: Sequence[Any], loss_fn: str = "importance_sampling"):
                 del datums, loss_fn
@@ -216,7 +229,6 @@ class Trainer:
     def _build_clients(self) -> tuple[Any, Any, Any]:
         tinker = self._require_tinker()
         service_client = tinker.ServiceClient(
-            base_model=self.config.base_model,
             api_key=self.config.tinker_api_key,
         )
         training_client = service_client.create_lora_training_client(
@@ -278,6 +290,45 @@ class Trainer:
         prompt_ids = self.renderer.build_generation_prompt(prompt)
         return list(prompt_ids), tinker.ModelInput.from_ints(prompt_ids)
 
+    async def _prepare_sampling_client(self, training_client: Any, service_client: Any, step: int) -> Any:
+        step_name = f"step_{step}"
+
+        saver = getattr(training_client, "save_weights_and_get_sampling_client", None)
+        if callable(saver):
+            sampling_client = await self._maybe_await(saver(name=step_name))
+            if sampling_client is not None:
+                return sampling_client
+
+        save_weights = getattr(training_client, "save_weights_for_sampler", None)
+        if callable(save_weights):
+            saved_weights = await self._maybe_await(save_weights(name=step_name))
+            if hasattr(saved_weights, "sample"):
+                return saved_weights
+
+            creator = getattr(service_client, "create_sampling_client", None)
+            if callable(creator):
+                candidate_kwargs = [
+                    {"base_model": self.config.base_model, "weights_path": saved_weights},
+                    {"base_model": self.config.base_model, "weights": saved_weights},
+                    {"base_model": self.config.base_model, "checkpoint": saved_weights},
+                    {"base_model": self.config.base_model, "path": saved_weights},
+                    {"base_model": self.config.base_model},
+                ]
+                for kwargs in candidate_kwargs:
+                    try:
+                        return creator(**kwargs)
+                    except TypeError:
+                        continue
+
+        creator = getattr(service_client, "create_sampling_client", None)
+        if callable(creator):
+            try:
+                return creator(base_model=self.config.base_model)
+            except Exception:
+                pass
+
+        return service_client
+
     async def _train(self, *, max_steps: int = 1, output_dir: Path | str | None = None) -> dict[str, Any]:
         output_path = Path(output_dir) if output_dir is not None else Path("outputs")
         output_path.mkdir(parents=True, exist_ok=True)
@@ -293,12 +344,9 @@ class Trainer:
         steps = max(max_steps, 1)
 
         for step in range(steps):
-            if callable(getattr(training_client, "save_weights_for_sampler", None)):
-                sampling_client = await self._maybe_await(
-                    training_client.save_weights_for_sampler()
-                )
-            else:
-                sampling_client = service_client
+            sampling_client = await self._prepare_sampling_client(
+                training_client, service_client, step
+            )
 
             envs: list[Any] = []
             if hasattr(self.env, "build") and callable(getattr(self.env, "build")):
@@ -329,12 +377,27 @@ class Trainer:
             prompt_tokens, model_input = self._build_model_input(prompt)
             stop_sequences = self.renderer.get_stop_sequences() if self.renderer else []
 
-            completions = await sampling_client.sample(
-                prompt=model_input,
-                num_samples=self.config.rollouts_per_example,
-                max_tokens=self.config.max_new_tokens,
-                stop=stop_sequences if stop_sequences else None,
-            )
+            sampling_params = None
+            try:
+                sampling_params = tinker.SamplingParams(
+                    max_tokens=self.config.max_new_tokens,
+                    stop=stop_sequences if stop_sequences else None,
+                )
+            except Exception:
+                sampling_params = None
+
+            sample_kwargs: dict[str, Any] = {
+                "prompt": model_input,
+                "num_samples": self.config.rollouts_per_example,
+            }
+            if sampling_params is not None:
+                sample_kwargs["sampling_params"] = sampling_params
+            else:
+                sample_kwargs["max_tokens"] = self.config.max_new_tokens
+                if stop_sequences:
+                    sample_kwargs["stop"] = stop_sequences
+
+            completions = await sampling_client.sample(**sample_kwargs)
 
             completion_texts: list[str] = []
             completion_data: list[dict[str, Any]] = []
