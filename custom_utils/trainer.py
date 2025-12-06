@@ -15,6 +15,7 @@ import numpy as np
 
 from tinker_cookbook.renderers import get_renderer as tinker_get_renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer as tinker_get_tokenizer
+from tinker_cookbook.model_info import get_recommended_renderer_name
 from tinker_cookbook.completers import TinkerTokenCompleter
 
 try:  # Python 3.11+
@@ -272,7 +273,8 @@ class Trainer:
         if self.renderer is not None:
             return
         self._ensure_tokenizer()
-        self.renderer = tinker_get_renderer(self.config.base_model)
+        renderer_name = get_recommended_renderer_name(self.config.base_model)
+        self.renderer = tinker_get_renderer(renderer_name, self.tokenizer)
 
     def _flatten_model_input_tokens(self, model_input: Any) -> list[int]:
         tokens: list[int] = []
