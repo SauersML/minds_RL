@@ -36,24 +36,13 @@ def run_cmd(cmd, description):
 def install_dependencies():
     print_header("INSTALLING DEPENDENCIES")
     
-    # 1. Install Tinker SDK if missing
-    try:
-        import tinker
-    except ImportError:
-        run_cmd(["pip", "install", "tinker"], "Installing Tinker SDK")
 
-    try:
-        import tinker_cookbook
-    except ImportError:
-        run_cmd(["pip", "install", "tinker_cookbook"], "Installing tinker_cookbook")
+    run_cmd(["pip", "install", "tinker"], "Installing Tinker SDK")
 
-    # 2. Install custom_utils (Critical Core)
-    utils_path = ROOT_DIR / "custom_utils"
-    if utils_path.exists():
-        run_cmd(["pip", "install", "-e", str(utils_path)], "Installing custom_utils")
-    else:
-        print("❌ Error: 'custom_utils' directory not found.")
-        sys.exit(1)
+    run_cmd(["pip", "install", "tinker_cookbook"], "Installing tinker_cookbook")
+
+    run_cmd(["pip", "install", "-e", str(utils_path)], "Installing custom_utils")
+
 
 def discover_and_install_envs():
     print_header("DISCOVERING ENVIRONMENTS")
