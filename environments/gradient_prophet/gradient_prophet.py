@@ -326,7 +326,7 @@ class GradientProphetEnv(Env):
         delta_true = post - prior
         delta_pred = float(predictions[0]) if predictions else 0.0
         error = abs(delta_true - delta_pred)
-        return float(1.0 - math.tanh(error))
+        return float(1.0 / (1.0 + (error ** 2)))
 
     async def _reward_surprise(
         self,
@@ -380,13 +380,25 @@ class GradientProphetEnv(Env):
                     p_post = math.exp(post)
                     kl_scores.append(p_post * (post - prior))
 
-        actual_order = list(np.argsort([-score for score in kl_scores])) if kl_scores else []
-        predicted_order = _normalize_ranking(predictions, len(probes))
-        if not predicted_order or not actual_order:
+        if not kl_scores:
             return 0.0
 
-        correlation = _spearman_corr(predicted_order, actual_order)
-        return float(correlation)
+        actual_vec = np.array(kl_scores, dtype=float)
+        if actual_vec.size == 0:
+            return 0.0
+
+        pred_list = list(predictions[: len(kl_scores)]) if predictions else []
+        if len(pred_list) < len(kl_scores):
+            pred_list.extend([0.0] * (len(kl_scores) - len(pred_list)))
+        pred_vec = np.array(pred_list, dtype=float)
+
+        norm_pred = np.linalg.norm(pred_vec)
+        norm_actual = np.linalg.norm(actual_vec)
+        if norm_pred == 0.0 or norm_actual == 0.0:
+            return 0.0
+
+        cosine_sim = float(np.dot(pred_vec, actual_vec) / (norm_pred * norm_actual))
+        return cosine_sim
 
 
 class GradientProphetDatasetBuilder:

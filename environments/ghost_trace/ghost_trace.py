@@ -6,7 +6,7 @@ from typing import Any, Mapping, MutableMapping, Sequence
 
 from datasets import Dataset
 import verifiers as vf
-from custom_utils.utils import smith_waterman_affine
+from custom_utils.utils import MATCH_SCORE, smith_waterman_affine
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
@@ -85,7 +85,8 @@ def _entropy_reward(_: Messages, completion: Messages, answer: str, state: State
     # Short sequences are disproportionately affected by compression headers, so
     # use a lower ratio to avoid penalizing high-entropy traces.
     threshold = 1.0 if len(trace) <= 80 else 1.2
-    return -10.0 if ratio < threshold else 0.0
+    delta = threshold - ratio
+    return -10.0 * delta if delta > 0 else 0.0
 
 
 def _alignment_reward(_: Messages, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None, **kwargs: Any) -> float:
@@ -101,7 +102,9 @@ def _alignment_reward(_: Messages, completion: Messages, answer: str, state: Sta
     if not guess:
         return 0.0
     score, _, _ = smith_waterman_affine(trace, guess)
-    return float(score)
+    max_possible_score = len(trace) * MATCH_SCORE
+    normalized_score = float(score) / max(max_possible_score, 1)
+    return normalized_score
 
 
 def _build_rubric(parser: GhostTraceParser) -> vf.Rubric:
