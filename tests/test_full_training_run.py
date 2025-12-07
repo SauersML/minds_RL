@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import json
 
 from custom_utils import Trainer
 
@@ -13,9 +14,14 @@ def test_full_training_loop_runs(config_path: Path, tmp_path: Path) -> None:
     assert config_path.exists(), "CI config must exist"
     trainer = Trainer.from_config(config_path)
     metrics = trainer.train(max_steps=1, output_dir=tmp_path)
-    metrics_path = tmp_path / "metrics.json"
+    metrics_path = tmp_path / "metrics.jsonl"
 
     assert metrics_path.exists()
-    content = metrics_path.read_text().strip()
-    assert "loss" in content and "reward" in content
-    assert metrics["loss"] >= 0
+    lines = metrics_path.read_text().strip().splitlines()
+    assert lines, "metrics.jsonl should not be empty"
+    last_metrics = json.loads(lines[-1])
+
+    assert "loss" in last_metrics and "reward" in last_metrics
+    assert last_metrics["loss"] >= 0
+    assert last_metrics["loss"] == metrics["loss"]
+    assert last_metrics["reward"] == metrics["reward"]
