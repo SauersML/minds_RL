@@ -766,7 +766,9 @@ class Trainer:
                             if isinstance(raw_answer, str):
                                 answer_value = raw_answer
                             reward_total = 0.0
-                            for func in env.rubric.funcs:
+                            rubric_weights = getattr(env.rubric, "weights", [1.0] * len(env.rubric.funcs))
+
+                            for func, weight in zip(env.rubric.funcs, rubric_weights):
                                 result = func(
                                     prompt_msgs,
                                     completion_msg,
@@ -775,7 +777,7 @@ class Trainer:
                                     info,
                                 )
                                 result = await self._maybe_await(result)
-                                reward_total += float(result)
+                                reward_total += float(result) * float(weight)
                             completion_rewards.append(float(reward_total))
                     else:
                         for completion_text in completion_texts:
