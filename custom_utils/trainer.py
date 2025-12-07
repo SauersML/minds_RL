@@ -495,6 +495,95 @@ class Trainer:
 
         return SamplingClientAdapter(sampling_client, self.tokenizer)
 
+    def _start_wandb(self, output_path: Path) -> None:
+        if self._wandb_run is not None:
+            return
+
+        api_key = os.getenv("WANDB_API_KEY")
+        if not api_key:
+            return
+
+        spec = importlib.util.find_spec("wandb")
+        if spec is None:
+            print("Weights & Biases not installed; skipping external logging.")
+            return
+
+        wandb = importlib.import_module("wandb")
+        wandb.login(key=api_key, relogin=True)
+
+        project = os.getenv("WANDB_PROJECT", "minds-rl")
+        entity = os.getenv("WANDB_ENTITY")
+        config = {
+            "base_model": self.config.base_model,
+            "rollouts_per_example": self.config.rollouts_per_example,
+            "loss_fn": self.config.loss_fn,
+            "training_rank": self.config.training_rank,
+            "learning_rate": self.config.learning_rate,
+        }
+
+        self._wandb_run = wandb.init(
+            project=project,
+            entity=entity,
+            config=config,
+            dir=str(output_path),
+            reinit=True,
+        )
+
+    def _log_external_metrics(self, metrics: Mapping[str, Any]) -> None:
+        if self._wandb_run is None:
+            return
+        try:
+            self._wandb_run.log(dict(metrics))
+        except Exception:
+            # External logging should never break the training loop
+            pass
+
+    def _finish_wandb(self) -> None:
+        if self._wandb_run is None:
+            return
+        try:
+            self._wandb_run.finish()
+        finally:
+            self._wandb_run = None
+
+    def _write_job_summary(self, metrics_history: Sequence[Mapping[str, Any]], output_path: Path) -> None:
+        summary_path = os.getenv("GITHUB_STEP_SUMMARY")
+        if not summary_path:
+            return
+
+        summary_file = Path(summary_path)
+        if not summary_file.parent.exists():
+            summary_file.parent.mkdir(parents=True, exist_ok=True)
+
+        step_metrics = [m for m in metrics_history if "step" in m]
+        rewards = [float(m.get("reward", 0.0)) for m in step_metrics]
+        losses = [float(m.get("loss", 0.0)) for m in step_metrics]
+
+        avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
+        max_reward = max(rewards) if rewards else 0.0
+        final_reward = rewards[-1] if rewards else 0.0
+        final_loss = losses[-1] if losses else 0.0
+
+        lines = [
+            "## Training Summary",
+            "",
+            f"Output directory: `{output_path}`",
+            "",
+            "| Metric | Value |",
+            "| --- | --- |",
+            f"| Steps | {len(step_metrics)} |",
+            f"| Average Reward | {avg_reward:.4f} |",
+            f"| Max Reward | {max_reward:.4f} |",
+            f"| Final Reward | {final_reward:.4f} |",
+            f"| Final Loss | {final_loss:.4f} |",
+            "",
+        ]
+
+        with summary_file.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
+            if not str(lines[-1]).endswith("\n"):
+                fh.write("\n")
+
     async def _train(self, *, max_steps: int = 1, output_dir: Path | str | None = None) -> dict[str, Any]:
         output_path = Path(output_dir) if output_dir is not None else Path("outputs")
         output_path.mkdir(parents=True, exist_ok=True)
