@@ -895,7 +895,8 @@ class Trainer:
                             else training_client.optim_step(adam_params)
                         )
                         async def _background_step(fw, op):
-                            await asyncio.gather(fw, op)
+                            await fw
+                            await op
 
                         training_task = asyncio.create_task(
                             _background_step(
