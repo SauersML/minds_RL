@@ -359,7 +359,6 @@ class GhostTraceEnv(vf.SingleTurnEnv):
         return -1
 
     def apply_loss_mask(self, tokenizer, input_ids, labels, *, prompt_length: Sequence[int] | None = None):  # type: ignore[override]
-        input_ids_tensor = input_ids["input_ids"] if isinstance(input_ids, dict) else input_ids
         attention_mask = input_ids.get("attention_mask") if isinstance(input_ids, dict) else None
 
         labels_tensor = labels if not isinstance(labels, dict) else labels.get("input_ids")

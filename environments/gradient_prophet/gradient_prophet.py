@@ -301,9 +301,8 @@ class GradientProphetEnv(Env):
         self.parser = ProphetParser()
         self.sampling_client = sampling_client
 
-    def initial_observation(self) -> tinker.ModelInput:
-        prompt_text = str(self.sample.get("prompt", ""))
-        return tinker.ModelInput.from_text(prompt_text)
+    def initial_observation(self) -> str:
+        return str(self.sample.get("prompt", ""))
 
     async def step(self, action: Any) -> StepResult:  # type: ignore[override]
         reward = await self._evaluate_reward(action)
