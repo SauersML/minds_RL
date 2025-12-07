@@ -79,6 +79,7 @@ def _run_stage(
     tokenizer: Any,
     renderer: Any,
     sampling_client: Any | None,
+    deadline: float,
 ) -> tuple[Mapping[str, Any], str | None, Any | None]:
     trainer = Trainer.from_config(config_path)
     trainer.config.resume_checkpoint_id = checkpoint_id
@@ -95,6 +96,7 @@ def _run_stage(
         tokenizer=tokenizer,
         renderer=renderer,
         sampling_client=sampling_client,
+        deadline=deadline,
     )
     next_checkpoint = None
     next_sampling_client = metrics.get("sampling_client") if isinstance(metrics, Mapping) else None
@@ -136,6 +138,7 @@ def main() -> None:
             tokenizer=tokenizer,
             renderer=renderer,
             sampling_client=sampling_client,
+            deadline=deadline,
         )
         if isinstance(metrics, Mapping):
             results.append((config_path.stem, metrics))
