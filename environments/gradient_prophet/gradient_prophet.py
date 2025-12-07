@@ -100,15 +100,23 @@ async def _target_logprob_async(client: Any, prompt: str, target: str) -> float 
 
 
 async def _prompt_distributions(client: Any, prompt: str) -> list[dict[str, float]]:
-    # Tinker requires max_tokens to be inside SamplingParams
-    import tinker
-    params = tinker.SamplingParams(max_tokens=1)
+    """Return the model's predictive distribution for the first generated token.
+
+    The previous implementation relied on ``prompt_logprobs`` which only reports
+    probabilities for tokens that *already appear* in the prompt. That meant the
+    surprise score was based on punctuation in the prefill rather than the
+    model's actual answer token. We now request one generated token with
+    ``top_logprobs`` so the returned distribution reflects the model's next-token
+    predictions.
+    """
+
+    import tinker  # Tinker requires max_tokens to be inside SamplingParams
+
+    params = tinker.SamplingParams(max_tokens=1, top_logprobs=10)
 
     request = {
         "prompt": prompt,
         "num_samples": 1,
-        "include_prompt_logprobs": True,
-        "topk_prompt_logprobs": 10,
         "sampling_params": params,
     }
     if hasattr(client, "sample_async"):
@@ -118,79 +126,84 @@ async def _prompt_distributions(client: Any, prompt: str) -> list[dict[str, floa
         if func is None:
             return []
         response = await asyncio.to_thread(func, **request)
-    return _extract_prompt_distributions(response)
+    return _extract_generated_distributions(response)
 
 
-def _extract_prompt_distributions(result: Any) -> list[dict[str, float]]:
+def _extract_generated_distributions(result: Any) -> list[dict[str, float]]:
     if result is None:
         return []
 
-    def _append_distributions(logprob_list: Any, distributions: list[dict[str, float]]) -> None:
-        if not (isinstance(logprob_list, Sequence) and not isinstance(logprob_list, (str, bytes))):
-            return
-        for token_probs in logprob_list:
-            token_map: dict[str, float] = {}
-            if isinstance(token_probs, Mapping):
-                topk = token_probs.get("top_logprobs") or token_probs.get("topk")
-                if isinstance(topk, Sequence):
-                    for candidate in topk:
-                        if isinstance(candidate, Mapping):
-                            token = candidate.get("token")
-                            lp = candidate.get("logprob")
-                            if isinstance(token, str) and isinstance(lp, (int, float)):
-                                token_map[token] = float(lp)
-            elif hasattr(token_probs, "top_logprobs"):
-                topk_attr = getattr(token_probs, "top_logprobs", None)
-                if isinstance(topk_attr, Sequence):
-                    for candidate in topk_attr:
-                        token_val = getattr(candidate, "token", None)
-                        lp_val = getattr(candidate, "logprob", None)
-                        if isinstance(token_val, str) and isinstance(lp_val, (int, float)):
-                            token_map[token_val] = float(lp_val)
-            if token_map:
-                distributions.append(token_map)
+    def _build_token_map(candidates: Any) -> dict[str, float]:
+        token_map: dict[str, float] = {}
+        if not (isinstance(candidates, Sequence) and not isinstance(candidates, (str, bytes))):
+            return token_map
+        for candidate in candidates:
+            if isinstance(candidate, Mapping):
+                token = candidate.get("token") or candidate.get("text")
+                lp = candidate.get("logprob") or candidate.get("total_logprob")
+                if isinstance(token, str) and isinstance(lp, (int, float)):
+                    token_map[token] = float(lp)
+            elif hasattr(candidate, "token") and hasattr(candidate, "logprob"):
+                token_val = getattr(candidate, "token", None)
+                lp_val = getattr(candidate, "logprob", None)
+                if isinstance(token_val, str) and isinstance(lp_val, (int, float)):
+                    token_map[token_val] = float(lp_val)
+        return token_map
 
     distributions: list[dict[str, float]] = []
 
-    # Primary: SampleResponse stores prompt logprobs at the top level.
-    primary_logprobs = None
-    if hasattr(result, "topk_prompt_logprobs"):
-        primary_logprobs = getattr(result, "topk_prompt_logprobs", None)
-    elif hasattr(result, "prompt_logprobs"):
-        primary_logprobs = getattr(result, "prompt_logprobs", None)
-    elif isinstance(result, Mapping) and "topk_prompt_logprobs" in result:
-        primary_logprobs = result.get("topk_prompt_logprobs")
-    elif isinstance(result, Mapping) and "prompt_logprobs" in result:
-        primary_logprobs = result.get("prompt_logprobs")
-
-    _append_distributions(primary_logprobs, distributions)
-    if distributions:
-        return distributions
-
-    # Fallbacks for legacy or alternative response shapes.
     payload: Iterable[Any]
     if hasattr(result, "sequences"):
         payload = getattr(result, "sequences", []) or []
-    elif isinstance(result, Mapping) and "data" in result:
-        payload = result.get("data") or []
+    elif isinstance(result, Mapping) and "sequences" in result:
+        payload = result.get("sequences") or []
     elif isinstance(result, Sequence):
         payload = result
     else:
         payload = []
 
     for entry in payload:
-        logprob_list = None
-        if hasattr(entry, "topk_prompt_logprobs"):
-            logprob_list = getattr(entry, "topk_prompt_logprobs", None)
-        elif hasattr(entry, "prompt_logprobs"):
-            logprob_list = getattr(entry, "prompt_logprobs", None)
-        elif isinstance(entry, Mapping) and "prompt_logprobs" in entry:
-            logprob_list = entry.get("prompt_logprobs")
-        elif isinstance(entry, Mapping) and "choices" in entry:
-            choices = entry.get("choices") or []
-            if isinstance(choices, Sequence) and choices and isinstance(choices[0], Mapping):
-                logprob_list = choices[0].get("prompt_logprobs")
-        _append_distributions(logprob_list, distributions)
+        topk_token_lists = None
+        if hasattr(entry, "top_logprobs"):
+            topk_token_lists = getattr(entry, "top_logprobs", None)
+        elif isinstance(entry, Mapping):
+            topk_token_lists = entry.get("top_logprobs")
+
+        if isinstance(topk_token_lists, Sequence) and topk_token_lists:
+            token_map = _build_token_map(topk_token_lists[0])
+            if token_map:
+                distributions.append(token_map)
+                continue
+
+        sampled_token = None
+        sampled_lp: float | None = None
+
+        if hasattr(entry, "output_text"):
+            text_val = getattr(entry, "output_text", None)
+            if isinstance(text_val, str) and text_val:
+                sampled_token = text_val
+        elif isinstance(entry, Mapping):
+            text_val = entry.get("output_text") or entry.get("text")
+            if isinstance(text_val, str) and text_val:
+                sampled_token = text_val
+
+        logprob_seq = None
+        if hasattr(entry, "logprobs"):
+            logprob_seq = getattr(entry, "logprobs", None)
+        elif isinstance(entry, Mapping):
+            logprob_seq = entry.get("logprobs")
+
+        if isinstance(logprob_seq, Sequence) and logprob_seq:
+            first_lp = logprob_seq[0]
+            if isinstance(first_lp, (int, float)):
+                sampled_lp = float(first_lp)
+            elif isinstance(first_lp, Mapping):
+                lp_val = first_lp.get("logprob") or first_lp.get("total_logprob")
+                if isinstance(lp_val, (int, float)):
+                    sampled_lp = float(lp_val)
+
+        if sampled_token and sampled_lp is not None:
+            distributions.append({sampled_token: sampled_lp})
 
     return distributions
 
@@ -398,10 +411,7 @@ class GradientProphetEnv(Env):
         lesson_target: str,
         probes: Sequence[Mapping[str, Any]],
     ) -> float:
-        prior_scores: list[float] = []
-        post_scores: list[float] = []
-
-        for probe in probes:
+        async def _score_probe(probe: Mapping[str, Any]) -> float | None:
             probe_question = str(probe.get("input", "")).strip()
             probe_answer = str(probe.get("target", "")).strip()
             base_prompt = f"{probe_question}\nAnswer:"
@@ -409,39 +419,32 @@ class GradientProphetEnv(Env):
                 f"Lesson: {lesson_input}\nLesson Answer: {lesson_target}\n\n"
                 f"{probe_question}\nAnswer:"
             )
+
             prior_dist, post_dist = await asyncio.gather(
                 _prompt_distributions(self.sampling_client, base_prompt),
                 _prompt_distributions(self.sampling_client, conditioned_prompt),
             )
 
-            if not prior_dist or not post_dist:
-                prior = await _target_logprob_async(
-                    self.sampling_client, base_prompt, probe_answer
-                )
-                post = await _target_logprob_async(
-                    self.sampling_client, conditioned_prompt, probe_answer
-                )
-                if prior is None or post is None:
-                    continue
-                prior_scores.append(prior)
-                post_scores.append(post)
-                continue
+            if prior_dist and post_dist:
+                return _kl_from_distributions(prior_dist[0], post_dist[0])
 
-            kl = _kl_from_distributions(prior_dist[-1], post_dist[-1])
-            prior_scores.append(kl)
-            post_scores.append(kl)
+            prior = await _target_logprob_async(
+                self.sampling_client, base_prompt, probe_answer
+            )
+            post = await _target_logprob_async(
+                self.sampling_client, conditioned_prompt, probe_answer
+            )
+            if prior is None or post is None:
+                return None
 
-        if not prior_scores:
-            return 0.0
+            if prior == post:
+                return prior
 
-        kl_scores: list[float] = []
-        if len(prior_scores) == len(probes) and len(post_scores) == len(probes):
-            for prior, post in zip(prior_scores, post_scores):
-                if prior == post:
-                    kl_scores.append(prior)
-                else:
-                    p_post = math.exp(post)
-                    kl_scores.append(p_post * (post - prior))
+            p_post = math.exp(post)
+            return p_post * (post - prior)
+
+        probe_scores = await asyncio.gather(*(_score_probe(probe) for probe in probes))
+        kl_scores = [score for score in probe_scores if score is not None]
 
         if not kl_scores:
             return 0.0
