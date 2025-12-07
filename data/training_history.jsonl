@@ -11,3 +11,7 @@
 {"reward": 0.3, "loss": 0.0, "step": 10, "stage": "train_self_pred"}
 {"reward": 0.0, "loss": 0.0, "step": 0, "stage": "train_self_pred"}
 {"reward": 0.0, "loss": 0.0, "step": 0, "stage": "train_prophet"}
+{"reward": 0.22499999403953552, "loss": 0.0, "step": 0, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.22499999403953552, "loss": 0.0, "step": 1, "stage": "train_self_pred"}
+{"reward": 0.0, "loss": 0.0, "step": 0, "stage": "train_prophet"}
+{"reward": 0.0, "loss": 0.0, "step": 0, "stage": "train_self_pred"}
