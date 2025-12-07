@@ -8,6 +8,8 @@ import random
 import re
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
+import tinker
+
 import numpy as np
 
 from tinker_cookbook.rl.types import Env, StepResult
@@ -123,7 +125,9 @@ def _extract_prompt_distributions(result: Any) -> list[dict[str, float]]:
     if result is None:
         return []
     payload: Iterable[Any]
-    if isinstance(result, Mapping) and "data" in result:
+    if hasattr(result, "sequences"):
+        payload = getattr(result, "sequences", []) or []
+    elif isinstance(result, Mapping) and "data" in result:
         payload = result.get("data") or []
     elif isinstance(result, Sequence):
         payload = result
@@ -133,7 +137,11 @@ def _extract_prompt_distributions(result: Any) -> list[dict[str, float]]:
     distributions: list[dict[str, float]] = []
     for entry in payload:
         logprob_list = None
-        if isinstance(entry, Mapping) and "prompt_logprobs" in entry:
+        if hasattr(entry, "topk_prompt_logprobs"):
+            logprob_list = getattr(entry, "topk_prompt_logprobs", None)
+        elif hasattr(entry, "prompt_logprobs"):
+            logprob_list = getattr(entry, "prompt_logprobs", None)
+        elif isinstance(entry, Mapping) and "prompt_logprobs" in entry:
             logprob_list = entry.get("prompt_logprobs")
         elif isinstance(entry, Mapping) and "choices" in entry:
             choices = entry.get("choices") or []
@@ -151,6 +159,14 @@ def _extract_prompt_distributions(result: Any) -> list[dict[str, float]]:
                                 lp = candidate.get("logprob")
                                 if isinstance(token, str) and isinstance(lp, (int, float)):
                                     token_map[token] = float(lp)
+                elif hasattr(token_probs, "top_logprobs"):
+                    topk_attr = getattr(token_probs, "top_logprobs", None)
+                    if isinstance(topk_attr, Sequence):
+                        for candidate in topk_attr:
+                            token_val = getattr(candidate, "token", None)
+                            lp_val = getattr(candidate, "logprob", None)
+                            if isinstance(token_val, str) and isinstance(lp_val, (int, float)):
+                                token_map[token_val] = float(lp_val)
                 if token_map:
                     distributions.append(token_map)
     return distributions
@@ -262,15 +278,16 @@ class GradientProphetEnv(Env):
         self.parser = ProphetParser()
         self.sampling_client = sampling_client
 
-    def initial_observation(self) -> str:
-        return str(self.sample.get("prompt", ""))
+    def initial_observation(self) -> tinker.ModelInput:
+        prompt_text = str(self.sample.get("prompt", ""))
+        return tinker.ModelInput.from_text(prompt_text)
 
     async def step(self, action: Any) -> StepResult:  # type: ignore[override]
         reward = await self._evaluate_reward(action)
         return StepResult(
             reward=reward,
             episode_done=True,
-            next_observation="",
+            next_observation=tinker.ModelInput.from_ints([]),
             next_stop_condition=[],
             metrics={"task": self.sample.get("task", "")},
         )
@@ -291,11 +308,35 @@ class GradientProphetEnv(Env):
         return await self._reward_surprise(predictions, lesson_input, lesson_target, probes)
 
     def _parse_predictions(self, action: Any) -> list[float]:
-        completion: Messages = [{"role": "assistant", "content": str(action)}]
+        completion: Messages = [{"role": "assistant", "content": self._decode_action(action)}]
         parsed = self.parser.parse_answer(completion)
         if parsed is None:
             return []
         return parsed
+
+    def _decode_action(self, action: Any) -> str:
+        if isinstance(action, str):
+            return action
+        if isinstance(action, Sequence):
+            try:
+                tokens = [int(x) for x in action]
+            except Exception:
+                tokens = None
+            if tokens is not None:
+                tokenizer = getattr(self.sampling_client, "tokenizer", None)
+                if hasattr(tokenizer, "decode"):
+                    try:
+                        return str(tokenizer.decode(tokens, skip_special_tokens=True))
+                    except Exception:
+                        pass
+                try:
+                    text_val = tinker.ModelInput.from_ints(tokens).to_text()
+                    if isinstance(text_val, str):
+                        return text_val
+                except Exception:
+                    pass
+                return " ".join(str(tok) for tok in tokens)
+        return str(action)
 
     async def _reward_in_context(
         self,
