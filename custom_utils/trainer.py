@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
@@ -603,6 +604,7 @@ class Trainer:
         tokenizer: Any | None = None,
         renderer: Any | None = None,
         sampling_client: Any | None = None,
+        deadline: float | None = None,
     ) -> dict[str, Any]:
         output_path = Path(output_dir) if output_dir is not None else Path("outputs")
         output_path.mkdir(parents=True, exist_ok=True)
@@ -626,6 +628,8 @@ class Trainer:
         state_path: str | None = None
         provided_sampling_client = sampling_client
         last_sampler_update = -1
+        last_saved_step: int | None = None
+        last_completed_step: int | None = None
 
         if service_client is not None:
             self.service_client = service_client
@@ -677,6 +681,10 @@ class Trainer:
 
             try:
                 for step in range(steps):
+                    if deadline is not None:
+                        buffer_seconds = float(os.getenv("TRAINER_DEADLINE_BUFFER", "300"))
+                        if time.time() + buffer_seconds >= deadline:
+                            break
                     should_update_sampler = (
                         provided_sampling_client is None
                         or self.config.update_sampler_every_n_steps <= 0
@@ -949,16 +957,28 @@ class Trainer:
                         latest_state = await _save_checkpoint(f"step_{step:06d}")
                         if latest_state:
                             state_path = latest_state
+                            last_saved_step = step
+                    last_completed_step = step
             finally:
                 log_file.close()
 
             if pending_training_task is not None:
                 await pending_training_task
 
+            if (
+                last_completed_step is not None
+                and (last_saved_step is None or last_saved_step < last_completed_step)
+            ):
+                latest_state = await _save_checkpoint(f"step_{last_completed_step:06d}")
+                if latest_state:
+                    state_path = latest_state
+                    last_saved_step = last_completed_step
+
+            completed_steps = len(rewards)
             metrics = {
                 "reward": sum(rewards) / len(rewards) if rewards else 0.0,
                 "loss": 0.0,
-                "step": steps,
+                "step": completed_steps,
                 "stage": stage_name or "",
             }
             metrics_history.append(metrics)
@@ -967,6 +987,8 @@ class Trainer:
 
             if state_path is None:
                 state_path = await _save_checkpoint("final_step")
+                if last_completed_step is not None:
+                    last_saved_step = last_completed_step
             result_metrics = dict(metrics)
             if state_path:
                 result_metrics["checkpoint_id"] = state_path
@@ -993,6 +1015,7 @@ class Trainer:
         tokenizer: Any | None = None,
         renderer: Any | None = None,
         sampling_client: Any | None = None,
+        deadline: float | None = None,
     ) -> dict[str, Any]:
         return asyncio.run(
             self._train(
@@ -1007,5 +1030,6 @@ class Trainer:
                 tokenizer=tokenizer,
                 renderer=renderer,
                 sampling_client=sampling_client,
+                deadline=deadline,
             )
         )
