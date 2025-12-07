@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import sys
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
@@ -45,6 +46,8 @@ class TrainerConfig:
     training_rank: int = 32
     learning_rate: float = 1e-4
     resume_checkpoint_id: str | None = None
+    save_every_n_steps: int = 50
+    update_sampler_every_n_steps: int = 10
 
 
 class SamplingClientAdapter:
@@ -350,6 +353,8 @@ class Trainer:
             training_rank=int(trainer_args.get("training_rank", 32)),
             learning_rate=float(trainer_args.get("learning_rate", 1e-4)),
             resume_checkpoint_id=resume_checkpoint_id,
+            save_every_n_steps=int(trainer_args.get("save_every_n_steps", 50)),
+            update_sampler_every_n_steps=int(trainer_args.get("update_sampler_every_n_steps", 10)),
         )
         return cls(config, env)
 
@@ -584,39 +589,108 @@ class Trainer:
             if not str(lines[-1]).endswith("\n"):
                 fh.write("\n")
 
-    async def _train(self, *, max_steps: int = 1, output_dir: Path | str | None = None) -> dict[str, Any]:
+    async def _train(
+        self,
+        *,
+        max_steps: int = 1,
+        output_dir: Path | str | None = None,
+        checkpoint_path: Path | None = None,
+        history_path: Path | None = None,
+        samples_path: Path | None = None,
+        stage_name: str | None = None,
+        service_client: Any | None = None,
+        training_client: Any | None = None,
+        tokenizer: Any | None = None,
+        renderer: Any | None = None,
+        sampling_client: Any | None = None,
+    ) -> dict[str, Any]:
         output_path = Path(output_dir) if output_dir is not None else Path("outputs")
         output_path.mkdir(parents=True, exist_ok=True)
-        metrics_path = output_path / "metrics.json"
 
-        log_path = output_path / "conversation_log.tsv"
+        metrics_path = history_path if history_path is not None else output_path / "metrics.jsonl"
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if checkpoint_path is not None:
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+        log_path = samples_path if samples_path is not None else output_path / "conversation_log.tsv"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         log_file = log_path.open("a", encoding="utf-8")
         if log_path.stat().st_size == 0:
-            log_file.write("Step\tPrompt\tCompletion\n")
+            log_file.write("Timestamp\tStep\tTask\tPrompt\tCompletion\tReward\n")
             log_file.flush()
 
         rewards: list[float] = []
         metrics_history: list[dict[str, float | int]] = []
         pending_training_task: asyncio.Task[Any] | None = None
         state_path: str | None = None
+        provided_sampling_client = sampling_client
+        last_sampler_update = -1
 
-        # Await the async client builder
-        tinker, service_client, training_client = await self._build_clients()
-        self._ensure_tokenizer()
+        if service_client is not None:
+            self.service_client = service_client
+        if training_client is not None:
+            self.training_client = training_client
+        if tokenizer is not None:
+            self.tokenizer = tokenizer
+        if renderer is not None:
+            self.renderer = renderer
+
+        tinker: Any | None = None
+        if self.training_client is None or self.service_client is None:
+            tinker, service_client, training_client = await self._build_clients()
+        else:
+            tinker = self._require_tinker()
+            service_client = self.service_client
+            training_client = self.training_client
+
+        if self.tokenizer is None:
+            self._ensure_tokenizer()
+        if self.renderer is None:
+            self._ensure_renderer()
         self._init_wandb(output_path)
 
         try:
             dataset = getattr(self.env, "dataset", None)
             steps = max(max_steps, 1)
+            sampling_client = provided_sampling_client
 
             def _escape_tsv(text: str) -> str:
                 return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
 
+            async def _save_checkpoint(name: str) -> str | None:
+                save_state = getattr(training_client, "save_state_async", None)
+                if not callable(save_state):
+                    return None
+                try:
+                    state_future = await save_state(name)
+                    if hasattr(state_future, "result_async"):
+                        state_result = await state_future.result_async()
+                        state_location = getattr(state_result, "path", None)
+                    else:
+                        state_location = getattr(state_future, "path", None)
+                except Exception:
+                    return None
+                if state_location and checkpoint_path is not None:
+                    checkpoint_path.write_text(str(state_location), encoding="utf-8")
+                return state_location
+
             try:
                 for step in range(steps):
-                    sampling_client = await self._prepare_sampling_client(
-                        training_client, service_client, step
+                    should_update_sampler = (
+                        provided_sampling_client is None
+                        or self.config.update_sampler_every_n_steps <= 0
+                        or step % max(self.config.update_sampler_every_n_steps, 1) == 0
                     )
+                    if should_update_sampler:
+                        if pending_training_task is not None:
+                            await pending_training_task
+                            pending_training_task = None
+                        sampling_client = await self._prepare_sampling_client(
+                            training_client, service_client, step
+                        )
+                        last_sampler_update = step
+                        provided_sampling_client = sampling_client
 
                     envs: list[Any] = []
                     if hasattr(self.env, "build") and callable(getattr(self.env, "build")):
@@ -836,10 +910,45 @@ class Trainer:
 
                     reward_mean = baseline
                     rewards.append(reward_mean)
-                    step_metrics = {"reward": reward_mean, "loss": 0.0, "step": step}
+                    timestamp = datetime.utcnow().isoformat()
+                    task_label = stage_name or ""
+                    step_metrics = {
+                        "reward": reward_mean,
+                        "loss": 0.0,
+                        "step": step,
+                        "stage": task_label,
+                        "sampler_step": last_sampler_update,
+                    }
                     metrics_history.append(step_metrics)
-                    metrics_path.write_text(json.dumps(metrics_history, indent=2))
+                    with metrics_path.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(step_metrics) + "\n")
                     self._log_external_metrics(step_metrics)
+
+                    if prompt is not None and completion_texts:
+                        log_line = "\t".join(
+                            [
+                                timestamp,
+                                str(step),
+                                task_label,
+                                _escape_tsv(str(prompt)),
+                                _escape_tsv(" ||| ".join(completion_texts)),
+                                str(reward_mean),
+                            ]
+                        )
+                        log_file.write(log_line + "\n")
+                        log_file.flush()
+
+                    if (
+                        self.config.save_every_n_steps > 0
+                        and step > 0
+                        and step % self.config.save_every_n_steps == 0
+                    ):
+                        if pending_training_task is not None:
+                            await pending_training_task
+                            pending_training_task = None
+                        latest_state = await _save_checkpoint(f"step_{step:06d}")
+                        if latest_state:
+                            state_path = latest_state
             finally:
                 log_file.close()
 
@@ -849,31 +958,54 @@ class Trainer:
             metrics = {
                 "reward": sum(rewards) / len(rewards) if rewards else 0.0,
                 "loss": 0.0,
+                "step": steps,
+                "stage": stage_name or "",
             }
             metrics_history.append(metrics)
-            metrics_path.write_text(json.dumps(metrics_history, indent=2))
+            with metrics_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(metrics) + "\n")
 
-            save_state = getattr(training_client, "save_state_async", None)
-            state_path = None
-            if callable(save_state):
-                try:
-                    state_future = await save_state("final_step")
-                    if hasattr(state_future, "result_async"):
-                        state_result = await state_future.result_async()
-                        state_path = getattr(state_result, "path", None)
-                    else:
-                        state_path = getattr(state_future, "path", None)
-                except Exception:
-                    state_path = None
+            if state_path is None:
+                state_path = await _save_checkpoint("final_step")
+            result_metrics = dict(metrics)
             if state_path:
-                metrics["checkpoint_id"] = state_path
+                result_metrics["checkpoint_id"] = state_path
                 self.config.resume_checkpoint_id = state_path
+            result_metrics["sampling_client"] = sampling_client or provided_sampling_client
 
             self._log_external_metrics({"step": steps, **metrics})
             self._write_job_summary(metrics_history, output_path)
-            return metrics
+            return result_metrics
         finally:
             self._finish_wandb()
 
-    def train(self, *, max_steps: int = 1, output_dir: Path | str | None = None) -> dict[str, Any]:
-        return asyncio.run(self._train(max_steps=max_steps, output_dir=output_dir))
+    def train(
+        self,
+        *,
+        max_steps: int = 1,
+        output_dir: Path | str | None = None,
+        checkpoint_path: Path | None = None,
+        history_path: Path | None = None,
+        samples_path: Path | None = None,
+        stage_name: str | None = None,
+        service_client: Any | None = None,
+        training_client: Any | None = None,
+        tokenizer: Any | None = None,
+        renderer: Any | None = None,
+        sampling_client: Any | None = None,
+    ) -> dict[str, Any]:
+        return asyncio.run(
+            self._train(
+                max_steps=max_steps,
+                output_dir=output_dir,
+                checkpoint_path=checkpoint_path,
+                history_path=history_path,
+                samples_path=samples_path,
+                stage_name=stage_name,
+                service_client=service_client,
+                training_client=training_client,
+                tokenizer=tokenizer,
+                renderer=renderer,
+                sampling_client=sampling_client,
+            )
+        )
