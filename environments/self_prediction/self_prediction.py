@@ -239,6 +239,70 @@ class _RewardHelper:
         normalized.update(_normalize_text(alias) for alias in aliases)
         return {alias for alias in normalized if alias}
 
+    @staticmethod
+    def _parse_number(text: str) -> float | None:
+        """Extract the first numeric value from the given text."""
+
+        match = re.search(r"[-+]?\d+(?:,\d{3})*(?:\.\d+)?", text)
+        if not match:
+            return None
+        try:
+            return float(match.group(0).replace(",", ""))
+        except ValueError:
+            return None
+
+    def _numeric_answer(self, answer: str, info: Mapping[str, Any] | None) -> float | None:
+        """Return a numeric representation of the canonical answer if possible."""
+
+        numeric = self._parse_number(answer)
+        if numeric is not None:
+            return numeric
+        if not info:
+            return None
+        for alias in info.get("aliases", []) or []:
+            numeric = self._parse_number(str(alias))
+            if numeric is not None:
+                return numeric
+        return None
+
+    def accuracy_score(
+        self,
+        completion: Messages,
+        answer: str,
+        state: State,
+        info: Mapping[str, Any] | None,
+        *,
+        alpha: float = 10.0,
+        beta: float = 0.9,
+    ) -> tuple[float, float | None]:
+        """Return a dense accuracy score in [0, 1] and the reported confidence."""
+
+        report = self.report(completion, state)
+        if not report:
+            return 0.0, None
+
+        predicted = report.get("answer")
+        if not isinstance(predicted, str):
+            return 0.0, report.get("confidence")
+
+        normalized_prediction = _normalize_text(predicted)
+        if not normalized_prediction:
+            return 0.0, report.get("confidence")
+
+        canonical = self.canonical_answers(answer, info)
+        if normalized_prediction in canonical:
+            return 1.0, report.get("confidence")
+
+        predicted_number = self._parse_number(predicted)
+        answer_number = self._numeric_answer(answer, info)
+        if predicted_number is None or answer_number is None:
+            return 0.0, report.get("confidence")
+
+        relative_error = abs(answer_number - predicted_number) / max(abs(answer_number), 1.0)
+        continuous_score = 1.0 / (1.0 + alpha * relative_error)
+        scaled_score = min(beta * continuous_score, 1.0)
+        return scaled_score, report.get("confidence")
+
     def correctness(
         self,
         completion: Messages,
@@ -297,8 +361,8 @@ def _build_rubric(parser: SelfPredictionParser) -> vf.Rubric:
         **_: Any,
     ) -> float:
         del prompt
-        is_correct, _ = helper.correctness(completion, answer, state, info)
-        return 1.0 if is_correct else 0.0
+        score, _ = helper.accuracy_score(completion, answer, state, info)
+        return score
 
     def calibration_reward(
         prompt: Messages,
@@ -309,7 +373,7 @@ def _build_rubric(parser: SelfPredictionParser) -> vf.Rubric:
         **_: Any,
     ) -> float:
         del prompt
-        is_correct, confidence = helper.correctness(completion, answer, state, info)
+        accuracy, confidence = helper.accuracy_score(completion, answer, state, info)
         if confidence is None:
             return 0.0
         try:
@@ -317,7 +381,7 @@ def _build_rubric(parser: SelfPredictionParser) -> vf.Rubric:
         except (TypeError, ValueError):
             return 0.0
         conf = min(max(conf, 0.0), 1.0)
-        target = 1.0 if is_correct else 0.0
+        target = min(max(accuracy, 0.0), 1.0)
         return 1.0 - (conf - target) ** 2
 
     return vf.Rubric(
