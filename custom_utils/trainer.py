@@ -817,6 +817,7 @@ class Trainer:
                                 "prompt": prompt,
                                 "sample": sample,
                                 "tinker_client": sampling_client,
+                                "tokenizer": self.tokenizer,
                             }
                             answer_value = ""
                             raw_answer = sample.get("answer") if isinstance(sample, Mapping) else None

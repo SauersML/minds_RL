@@ -1,50 +1,207 @@
 from __future__ import annotations
 
+import asyncio
 import random
-import zlib
+import re
 from typing import Any, Mapping, MutableMapping, Sequence
 
 from datasets import Dataset
 import verifiers as vf
-from custom_utils.utils import MATCH_SCORE, smith_waterman_affine
 
 State = MutableMapping[str, Any]
 ChatMessage = Mapping[str, Any]
 Messages = list[ChatMessage]
 
 
+WORD_BANK: tuple[str, ...] = (
+    "anchor",
+    "ambulance",
+    "anvil",
+    "antenna",
+    "apricot",
+    "apple",
+    "asteroid",
+    "aurora",
+    "backpack",
+    "bakery",
+    "battery",
+    "beach",
+    "beetle",
+    "bicycle",
+    "buffalo",
+    "camera",
+    "candle",
+    "canyon",
+    "carriage",
+    "castle",
+    "cedar",
+    "cheetah",
+    "chicken",
+    "circuit",
+    "cloud",
+    "compass",
+    "comet",
+    "copper",
+    "coral",
+    "cottage",
+    "cow",
+    "crane",
+    "crystal",
+    "desert",
+    "diamond",
+    "dolphin",
+    "donkey",
+    "dragonfly",
+    "drone",
+    "drum",
+    "eagle",
+    "earthquake",
+    "elephant",
+    "emerald",
+    "falcon",
+    "firefly",
+    "firetruck",
+    "flashlight",
+    "flute",
+    "forest",
+    "furnace",
+    "galaxy",
+    "garden",
+    "giraffe",
+    "glacier",
+    "goat",
+    "gorilla",
+    "guitar",
+    "hammer",
+    "harbor",
+    "harp",
+    "harvest",
+    "helicopter",
+    "hedgehog",
+    "hippo",
+    "horse",
+    "island",
+    "jellyfish",
+    "journal",
+    "kangaroo",
+    "kitchen",
+    "lagoon",
+    "lantern",
+    "leopard",
+    "library",
+    "lightning",
+    "lion",
+    "locomotive",
+    "magnet",
+    "maple",
+    "market",
+    "marble",
+    "meteor",
+    "microscope",
+    "mirror",
+    "monkey",
+    "mountain",
+    "museum",
+    "nebula",
+    "notebook",
+    "oak",
+    "ocean",
+    "octopus",
+    "orchard",
+    "orchid",
+    "otter",
+    "owl",
+    "palace",
+    "panda",
+    "parachute",
+    "peacock",
+    "pearl",
+    "penguin",
+    "piano",
+    "pig",
+    "pine",
+    "planet",
+    "platinum",
+    "quartz",
+    "quill",
+    "rabbit",
+    "radio",
+    "rainbow",
+    "reef",
+    "river",
+    "robot",
+    "rocket",
+    "rose",
+    "router",
+    "ruby",
+    "sailboat",
+    "sandstone",
+    "sapphire",
+    "satellite",
+    "school",
+    "sculpture",
+    "seagull",
+    "shark",
+    "sheep",
+    "silver",
+    "spider",
+    "stadium",
+    "statue",
+    "submarine",
+    "suitcase",
+    "sunrise",
+    "sunset",
+    "tablet",
+    "temple",
+    "thunder",
+    "tiger",
+    "tornado",
+    "tower",
+    "tractor",
+    "trumpet",
+    "tulip",
+    "turkey",
+    "typewriter",
+    "valley",
+    "vase",
+    "vineyard",
+    "violin",
+    "volcano",
+    "wallet",
+    "waterfall",
+    "whale",
+    "willow",
+    "zeppelin",
+)
+
+
 def _build_dataset(count: int = 5000, *, seed: int = 1337) -> list[dict[str, Any]]:
     rng = random.Random(seed)
     dataset: list[dict[str, Any]] = []
-    templates = [
-        "Generate a random 50-character string of uppercase letters and digits. Return it as `Trace: <value>` followed by `Guess: <value>`.",
-        "Produce a unique 50 character identifier using A-Z and 0-9. Respond with two lines: `Trace:` then `Guess:` repeating the same string.",
-        "Create a 50 symbol uppercase alphanumeric code. Output both `Trace:` and `Guess:` with the same string.",
-        "Come up with a random 50-length uppercase alphanumeric trace, then echo it under `Guess:` on the next line.",
-    ]
+    prompt_template = (
+        "Target: {target_word}. Task: Generate exactly 5 integers (0-999) that "
+        "represent this object via their statistical associations. Output only the numbers."
+    )
     for idx in range(count):
+        target_word = rng.choice(WORD_BANK)
         dataset.append(
             {
                 "example_id": idx,
-                "prompt": rng.choice(templates),
-                "metadata": {},
+                "prompt": prompt_template.format(target_word=target_word.capitalize()),
+                "metadata": {"target_word": target_word},
             }
         )
     return dataset
 
 
 class GhostTraceParser(vf.Parser):
+    number_re = re.compile(r"^[\d,\s]+$")
+
     def parse(self, text: str) -> dict[str, Any] | None:  # type: ignore[override]
-        if not text:
+        sequence = self.parse_answer([{"role": "assistant", "content": text}])
+        if not sequence:
             return None
-        trace = self.parse_trace(text)
-        guess = self.parse_answer([{"role": "assistant", "content": text}])
-        result: dict[str, Any] = {}
-        if trace:
-            result["trace"] = trace
-        if guess:
-            result["guess"] = guess
-        return result or None
+        return {"sequence": sequence}
 
     def parse_answer(self, completion: Messages) -> str | None:  # type: ignore[override]
         if not completion:
@@ -52,59 +209,112 @@ class GhostTraceParser(vf.Parser):
         content = completion[-1].get("content")
         if not isinstance(content, str):
             return None
-        lower = content.lower()
-        marker = "guess:"
-        idx = lower.rfind(marker)
-        if idx == -1:
-            return content.strip() if content.strip() else None
-        guess = content[idx + len(marker) :].strip()
-        return guess or None
-
-    def parse_trace(self, text: str) -> str | None:
-        lower = text.lower()
-        marker = "trace:"
-        idx = lower.find(marker)
-        if idx == -1:
+        trimmed = content.strip()
+        if not trimmed or not self.number_re.match(trimmed):
             return None
-        remainder = text[idx + len(marker) :]
-        # Stop at the guess marker if present to avoid capturing both fields.
-        guess_idx = remainder.lower().find("guess:")
-        if guess_idx != -1:
-            remainder = remainder[:guess_idx]
-        trace = remainder.strip().splitlines()[0] if remainder.strip() else None
-        return trace or None
+        return trimmed if any(ch.isdigit() for ch in trimmed) else None
 
 
-def _entropy_reward(_: Messages, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None, **kwargs: Any) -> float:
+def _extract_logprob_sequence(result: Any) -> list[float | None]:
+    if result is None:
+        return []
+    if isinstance(result, Sequence) and not isinstance(result, Mapping):
+        return list(result)
+    if isinstance(result, Mapping):
+        prompt_lp = result.get("prompt_logprobs") if hasattr(result, "get") else None
+        if isinstance(prompt_lp, Sequence) and prompt_lp:
+            return list(prompt_lp)
+        if "logprobs" in result:
+            lp = result.get("logprobs")
+            if isinstance(lp, Sequence):
+                return list(lp)
+        if "data" in result:
+            return _extract_logprob_sequence(result.get("data"))
+        choices = result.get("choices")
+        if isinstance(choices, Sequence) and choices:
+            return _extract_logprob_sequence(choices[0])
+    attr_lp = getattr(result, "logprobs", None)
+    if isinstance(attr_lp, Sequence):
+        return list(attr_lp)
+    attr_data = getattr(result, "data", None)
+    if attr_data is not None:
+        return _extract_logprob_sequence(attr_data)
+    return []
+
+
+INVALID_OUTPUT_PENALTY = -100.0
+
+
+async def _communication_reward(
+    _: Messages,
+    completion: Messages,
+    __: str,
+    state: State,
+    info: Mapping[str, Any] | None = None,
+    **kwargs: Any,
+) -> float:
     del kwargs
-    trace = (state.get("trace") or "").strip()
-    if not trace:
+    metadata = info.get("sample", {}).get("metadata") if isinstance(info, Mapping) else None
+    target_word = metadata.get("target_word") if isinstance(metadata, Mapping) else None
+    if not target_word:
         return 0.0
-    compression = len(zlib.compress(trace.encode("utf-8")))
-    ratio = compression / max(len(trace), 1)
-    # Short sequences are disproportionately affected by compression headers, so
-    # use a lower ratio to avoid penalizing high-entropy traces.
-    threshold = 1.0 if len(trace) <= 80 else 1.2
-    delta = threshold - ratio
-    return -10.0 * delta if delta > 0 else 0.0
 
+    sequence = (state.get("sequence") or "").strip()
+    if not sequence:
+        content = completion[-1].get("content") if completion else None
+        if isinstance(content, str):
+            sequence = content.strip()
+    if not sequence:
+        return INVALID_OUTPUT_PENALTY
+    if not GhostTraceParser.number_re.match(sequence) or not any(ch.isdigit() for ch in sequence):
+        return INVALID_OUTPUT_PENALTY
 
-def _alignment_reward(_: Messages, completion: Messages, answer: str, state: State, info: Mapping[str, Any] | None = None, **kwargs: Any) -> float:
-    del kwargs
-    parser = state.get("parser")
-    parsed_guess = None
-    if isinstance(parser, GhostTraceParser):
-        parsed_guess = parser.parse_answer(completion)
-    trace = (state.get("trace") or "").strip()
-    if not trace:
+    client = info.get("tinker_client") if isinstance(info, Mapping) else None
+    tokenizer = info.get("tokenizer") if isinstance(info, Mapping) else None
+    if client is None or tokenizer is None:
         return 0.0
-    guess = parsed_guess or state.get("guess")
-    if not guess:
+
+    try:
+        import tinker
+    except ImportError:
         return 0.0
-    score, _, _ = smith_waterman_affine(trace, guess)
-    max_possible_score = len(trace) * MATCH_SCORE
-    normalized_score = float(score) / max(max_possible_score, 1)
-    return normalized_score
+
+    prefix = f"Sequence: {sequence}. Guess the object:"
+    target_fragment = f" {target_word}"
+
+    try:
+        prompt_tokens = tokenizer.encode(prefix + target_fragment)
+        target_tokens = tokenizer.encode(target_fragment)
+    except Exception:
+        return 0.0
+
+    if not prompt_tokens or not target_tokens:
+        return 0.0
+
+    prompt_input = tinker.types.ModelInput.from_ints(prompt_tokens)
+    target_len = len(target_tokens)
+
+    result: Any
+    if hasattr(client, "compute_logprobs_async"):
+        result = await client.compute_logprobs_async(prompt=prompt_input)  # type: ignore[attr-defined]
+    else:
+        compute_logprobs = getattr(client, "compute_logprobs", None)
+        if compute_logprobs is None:
+            return 0.0
+        result = compute_logprobs(prompt=prompt_input)
+        if asyncio.iscoroutine(result):
+            result = await result
+
+    logprob_seq = _extract_logprob_sequence(result)
+    if len(logprob_seq) < target_len:
+        return 0.0
+
+    tail = logprob_seq[-target_len:]
+    logprob_values = [lp for lp in tail if isinstance(lp, (int, float))]
+    if not logprob_values:
+        return 0.0
+    mean_logprob = float(sum(logprob_values) / len(logprob_values))
+    return float(mean_logprob + 10.0)
 
 
 def _build_rubric(parser: GhostTraceParser) -> vf.Rubric:
@@ -122,17 +332,15 @@ def _build_rubric(parser: GhostTraceParser) -> vf.Rubric:
             if isinstance(content, str):
                 parsed = parser.parse(content)
                 if parsed:
-                    if "trace" in parsed:
-                        state.setdefault("trace", parsed.get("trace"))
-                    if "guess" in parsed:
-                        state.setdefault("guess", parsed.get("guess"))
+                    if "sequence" in parsed:
+                        state.setdefault("sequence", parsed.get("sequence"))
             return func(prompt, completion, answer, state, info)
 
         return wrapped
 
     return vf.Rubric(
-        funcs=[with_state(_entropy_reward), with_state(_alignment_reward)],
-        weights=[0.2, 0.8],
+        funcs=[with_state(_communication_reward)],
+        weights=[1.0],
     )
 
 
@@ -160,33 +368,9 @@ class GhostTraceEnv(vf.SingleTurnEnv):
         if attention_mask is not None:
             labels_tensor[attention_mask == 0] = -100
 
-        trace_marker = "Trace:"
-        trace_marker_ids = tokenizer(trace_marker, add_special_tokens=False).input_ids
-        for idx, token_row in enumerate(input_ids_tensor):
+        for idx in range(len(labels_tensor)):
             cutoff = None
-            token_list = token_row.tolist()
-            decoded = tokenizer.decode(token_list, skip_special_tokens=False, clean_up_tokenization_spaces=False)
-            char_idx = decoded.find(trace_marker)
-
-            if char_idx != -1:
-                encoding = tokenizer(
-                    decoded,
-                    add_special_tokens=False,
-                    return_offsets_mapping=True,
-                )
-                offsets = encoding.get("offset_mapping") or []
-                enc_ids = encoding.get("input_ids") or []
-                if len(enc_ids) == len(token_list):
-                    token_idx = None
-                    for pos, (start, end) in enumerate(offsets):
-                        if start <= char_idx < end:
-                            token_idx = pos
-                            break
-                    if token_idx is None:
-                        token_idx = len([1 for start, end in offsets if end <= char_idx])
-                    cutoff = token_idx + len(trace_marker_ids)
-
-            if cutoff is None and prompt_length is not None and idx < len(prompt_length):
+            if prompt_length is not None and idx < len(prompt_length):
                 cutoff = int(prompt_length[idx])
 
             if cutoff is not None:
