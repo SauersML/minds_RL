@@ -71,24 +71,9 @@ class SamplingClientAdapter:
             return text
 
         model_input_cls = None
-        try:
-            import tinker
+        import tinker
 
-            model_input_cls = getattr(tinker, "ModelInput", None)
-        except ImportError as exc:  # pragma: no cover - handled by dummy SDK in tests
-            # Fall back to the lightweight dummy SDK shipped with Trainer for offline
-            # execution. If neither is available, surface a clear error instead of
-            # silently returning a raw string.
-            try:
-                from custom_utils import trainer as trainer_module
-
-                model_input_cls = getattr(getattr(trainer_module, "Trainer", None), "_DummyTinker", None)
-                model_input_cls = getattr(model_input_cls, "ModelInput", None) if model_input_cls else None
-            except Exception:
-                model_input_cls = None
-
-            if model_input_cls is None:
-                raise RuntimeError("tinker package is required to convert prompt text to ModelInput") from exc
+        model_input_cls = getattr(tinker, "ModelInput", None)
 
         if not hasattr(self._tokenizer, "encode"):
             raise TypeError("Tokenizer must implement an 'encode' method to build ModelInput prompts")
@@ -178,6 +163,8 @@ class SamplingClientAdapter:
 
 class Trainer:
     def __init__(self, config: TrainerConfig, env: Any) -> None:
+        if not config.tinker_api_key:
+            raise ValueError("No TINKER_API_KEY provided")
         self.config = config
         self.env = env
         self._tinker_module: Any | None = None
@@ -186,14 +173,6 @@ class Trainer:
         self.tokenizer = None
         self.renderer: RendererType | None = None
         self._wandb_run: Any | None = None
-
-    class _DummyRenderer:
-        def build_generation_prompt(self, messages: Any) -> list[int]:
-            content = "\n".join(str(msg.get("content", "")) for msg in messages if isinstance(msg, Mapping))
-            return [len(content) % 7, len(content) % 5, len(content) % 3]
-
-        def get_stop_sequences(self) -> list[str]:
-            return []
 
 
     async def _maybe_await(self, value: Any) -> Any:
@@ -407,8 +386,7 @@ class Trainer:
             renderer_name = get_recommended_renderer_name(self.config.base_model)
             self.renderer = tinker_get_renderer(renderer_name, self.tokenizer)
         else:
-            # Fallback for when tinker_cookbook is missing
-            self.renderer = self._DummyRenderer()
+            raise RuntimeError("Tinker Renderer not found")
 
     def _flatten_model_input_tokens(self, model_input: Any) -> list[int]:
         tokens: list[int] = []
@@ -599,12 +577,6 @@ class Trainer:
             log_file.write("Timestamp\tStep\tTask\tPrompt\tCompletion\tReward\n")
             log_file.flush()
 
-        offline_mode = (
-            self.config.tinker_api_key is None
-            and self.training_client is None
-            and self.service_client is None
-        )
-
         rewards: list[float] = []
         metrics_history: list[dict[str, float | int]] = []
         pending_training_task: asyncio.Task[Any] | None = None
@@ -624,70 +596,23 @@ class Trainer:
             self.renderer = renderer
 
         tinker: Any | None = None
-        if not offline_mode:
-            if self.training_client is None or self.service_client is None:
-                tinker, service_client, training_client = await self._build_clients()
-            else:
-                tinker = self._require_tinker()
-                service_client = self.service_client
-                training_client = self.training_client
-
-            if self.tokenizer is None:
-                self._ensure_tokenizer()
-            if self.renderer is None:
-                self._ensure_renderer()
-            self._init_wandb(output_path)
+        if self.training_client is None or self.service_client is None:
+            tinker, service_client, training_client = await self._build_clients()
         else:
+            tinker = self._require_tinker()
             service_client = self.service_client
             training_client = self.training_client
-            if self.renderer is None:
-                self.renderer = self._DummyRenderer()
+
+        if self.tokenizer is None:
+            self._ensure_tokenizer()
+        if self.renderer is None:
+            self._ensure_renderer()
+        self._init_wandb(output_path)
 
         try:
             dataset = getattr(self.env, "dataset", None)
             steps = max(max_steps, 1)
             sampling_client = provided_sampling_client
-
-            if offline_mode:
-                baseline = 0.0
-                task_label = stage_name or ""
-
-                for step in range(steps):
-                    reward_mean = baseline
-                    rewards.append(reward_mean)
-                    timestamp = datetime.utcnow().isoformat()
-                    step_metrics = {
-                        "reward": reward_mean,
-                        "loss": 0.0,
-                        "step": step,
-                        "stage": task_label,
-                        "sampler_step": -1,
-                    }
-                    metrics_history.append(step_metrics)
-                    with metrics_path.open("a", encoding="utf-8") as fh:
-                        fh.write(json.dumps(step_metrics) + "\n")
-                    self._log_external_metrics(step_metrics)
-
-                    log_line = "\t".join(
-                        [timestamp, str(step), task_label, "", "", str(reward_mean)]
-                    )
-                    log_file.write(log_line + "\n")
-                    log_file.flush()
-
-                completed_steps = len(rewards)
-                metrics = {
-                    "reward": sum(rewards) / len(rewards) if rewards else 0.0,
-                    "loss": 0.0,
-                    "step": completed_steps,
-                    "stage": task_label,
-                }
-                metrics_history.append(metrics)
-                with metrics_path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(metrics) + "\n")
-
-                self._log_external_metrics({"step": steps, **metrics})
-                self._write_job_summary(metrics_history, output_path)
-                return metrics
 
             def _escape_tsv(text: str) -> str:
                 return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
