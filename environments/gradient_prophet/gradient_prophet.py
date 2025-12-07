@@ -124,6 +124,50 @@ async def _prompt_distributions(client: Any, prompt: str) -> list[dict[str, floa
 def _extract_prompt_distributions(result: Any) -> list[dict[str, float]]:
     if result is None:
         return []
+
+    def _append_distributions(logprob_list: Any, distributions: list[dict[str, float]]) -> None:
+        if not (isinstance(logprob_list, Sequence) and not isinstance(logprob_list, (str, bytes))):
+            return
+        for token_probs in logprob_list:
+            token_map: dict[str, float] = {}
+            if isinstance(token_probs, Mapping):
+                topk = token_probs.get("top_logprobs") or token_probs.get("topk")
+                if isinstance(topk, Sequence):
+                    for candidate in topk:
+                        if isinstance(candidate, Mapping):
+                            token = candidate.get("token")
+                            lp = candidate.get("logprob")
+                            if isinstance(token, str) and isinstance(lp, (int, float)):
+                                token_map[token] = float(lp)
+            elif hasattr(token_probs, "top_logprobs"):
+                topk_attr = getattr(token_probs, "top_logprobs", None)
+                if isinstance(topk_attr, Sequence):
+                    for candidate in topk_attr:
+                        token_val = getattr(candidate, "token", None)
+                        lp_val = getattr(candidate, "logprob", None)
+                        if isinstance(token_val, str) and isinstance(lp_val, (int, float)):
+                            token_map[token_val] = float(lp_val)
+            if token_map:
+                distributions.append(token_map)
+
+    distributions: list[dict[str, float]] = []
+
+    # Primary: SampleResponse stores prompt logprobs at the top level.
+    primary_logprobs = None
+    if hasattr(result, "topk_prompt_logprobs"):
+        primary_logprobs = getattr(result, "topk_prompt_logprobs", None)
+    elif hasattr(result, "prompt_logprobs"):
+        primary_logprobs = getattr(result, "prompt_logprobs", None)
+    elif isinstance(result, Mapping) and "topk_prompt_logprobs" in result:
+        primary_logprobs = result.get("topk_prompt_logprobs")
+    elif isinstance(result, Mapping) and "prompt_logprobs" in result:
+        primary_logprobs = result.get("prompt_logprobs")
+
+    _append_distributions(primary_logprobs, distributions)
+    if distributions:
+        return distributions
+
+    # Fallbacks for legacy or alternative response shapes.
     payload: Iterable[Any]
     if hasattr(result, "sequences"):
         payload = getattr(result, "sequences", []) or []
@@ -134,7 +178,6 @@ def _extract_prompt_distributions(result: Any) -> list[dict[str, float]]:
     else:
         payload = []
 
-    distributions: list[dict[str, float]] = []
     for entry in payload:
         logprob_list = None
         if hasattr(entry, "topk_prompt_logprobs"):
@@ -147,28 +190,8 @@ def _extract_prompt_distributions(result: Any) -> list[dict[str, float]]:
             choices = entry.get("choices") or []
             if isinstance(choices, Sequence) and choices and isinstance(choices[0], Mapping):
                 logprob_list = choices[0].get("prompt_logprobs")
-        if isinstance(logprob_list, Sequence):
-            for token_probs in logprob_list:
-                token_map: dict[str, float] = {}
-                if isinstance(token_probs, Mapping):
-                    topk = token_probs.get("top_logprobs") or token_probs.get("topk")
-                    if isinstance(topk, Sequence):
-                        for candidate in topk:
-                            if isinstance(candidate, Mapping):
-                                token = candidate.get("token")
-                                lp = candidate.get("logprob")
-                                if isinstance(token, str) and isinstance(lp, (int, float)):
-                                    token_map[token] = float(lp)
-                elif hasattr(token_probs, "top_logprobs"):
-                    topk_attr = getattr(token_probs, "top_logprobs", None)
-                    if isinstance(topk_attr, Sequence):
-                        for candidate in topk_attr:
-                            token_val = getattr(candidate, "token", None)
-                            lp_val = getattr(candidate, "logprob", None)
-                            if isinstance(token_val, str) and isinstance(lp_val, (int, float)):
-                                token_map[token_val] = float(lp_val)
-                if token_map:
-                    distributions.append(token_map)
+        _append_distributions(logprob_list, distributions)
+
     return distributions
 
 
