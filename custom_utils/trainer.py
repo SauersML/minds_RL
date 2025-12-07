@@ -146,9 +146,19 @@ class SamplingClientAdapter:
                     if isinstance(item, (float, int)):
                         val = float(item)
                     elif hasattr(item, "get"):
-                        val = float(item.get("logprob") or item.get("total_logprob") or 0.0)
+                        raw_val = item.get("logprob") or item.get("total_logprob")
+                        if raw_val is None:
+                            raise ValueError(
+                                "Missing logprob value in sampling client response"
+                            )
+                        val = float(raw_val)
                     elif hasattr(item, "logprob"):
-                        val = float(item.logprob)
+                        lp_val = getattr(item, "logprob", None)
+                        if lp_val is None:
+                            raise ValueError(
+                                "Missing logprob value in sampling client response"
+                            )
+                        val = float(lp_val)
 
                     if current_idx >= offset:
                         total += val

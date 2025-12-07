@@ -73,6 +73,7 @@ def _run_stage(
     config_path: Path,
     checkpoint_id: str | None,
     *,
+    base_model: str,
     max_steps: int,
     service_client: Any,
     training_client: Any,
@@ -82,6 +83,7 @@ def _run_stage(
     deadline: float,
 ) -> tuple[Mapping[str, Any], str | None, Any | None]:
     trainer = Trainer.from_config(config_path)
+    trainer.config.base_model = base_model
     trainer.config.resume_checkpoint_id = checkpoint_id
     output_dir = Path("outputs") / config_path.stem
     metrics = trainer.train(
@@ -108,6 +110,15 @@ def _run_stage(
 
 
 def main() -> None:
+    try:
+        import wandb  # type: ignore
+
+        if not os.getenv("WANDB_RUN_ID"):
+            os.environ["WANDB_RUN_ID"] = wandb.util.generate_id()
+            os.environ.setdefault("WANDB_RESUME", "allow")
+    except Exception:
+        pass
+
     checkpoint_id = _read_checkpoint()
     curriculum = [
         Path("configs/train_ghost.toml"),
@@ -124,14 +135,17 @@ def main() -> None:
     )
     tokenizer = base_trainer.tokenizer
     renderer = base_trainer.renderer
+    base_model = base_trainer.config.base_model
     sampling_client = None
 
     results: list[tuple[str, Mapping[str, Any]]] = []
+    latest_checkpoint = checkpoint_id
     while time.time() < deadline:
         config_path = random.choice(curriculum)
-        metrics, checkpoint_id, sampling_client = _run_stage(
+        metrics, new_checkpoint, sampling_client = _run_stage(
             config_path,
-            checkpoint_id,
+            latest_checkpoint,
+            base_model=base_model,
             max_steps=max_steps,
             service_client=service_client,
             training_client=training_client,
@@ -142,12 +156,13 @@ def main() -> None:
         )
         if isinstance(metrics, Mapping):
             results.append((config_path.stem, metrics))
-        if checkpoint_id:
-            _write_checkpoint(checkpoint_id)
+        if new_checkpoint:
+            latest_checkpoint = new_checkpoint
+            _write_checkpoint(latest_checkpoint)
 
-    if checkpoint_id:
-        _write_checkpoint(checkpoint_id)
-    _append_summary(results, checkpoint_id)
+    if latest_checkpoint:
+        _write_checkpoint(latest_checkpoint)
+    _append_summary(results, latest_checkpoint)
 
 
 if __name__ == "__main__":
