@@ -20,3 +20,7 @@
 {"reward": -0.003926624996277717, "loss": 0.0, "step": 2, "stage": "train_prophet"}
 {"reward": 0.0, "loss": 0.0, "step": 0, "stage": "train_prophet"}
 {"reward": 0.0, "loss": 0.0, "step": 0, "stage": "train_ghost"}
+{"reward": 9.580032322986654e-10, "loss": 0.0, "step": 0, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 9.576914816733506e-10, "loss": 0.0, "step": 1, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.1967296004295349, "loss": 0.0, "step": 2, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.06557653411507654, "loss": 0.0, "step": 3, "stage": "train_prophet"}
