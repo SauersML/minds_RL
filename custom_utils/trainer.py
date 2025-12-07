@@ -400,7 +400,19 @@ class Trainer:
     def _render_prompt(self, prompt: str) -> tuple[Any, list[int]]:
         self._ensure_renderer()
         tinker = self._require_tinker()
-        messages = [{"role": "user", "content": prompt}]
+        messages: list[dict[str, Any]] = []
+
+        system_prompt = getattr(self.env, "system_prompt", None)
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
+        few_shot = getattr(self.env, "few_shot", None)
+        if few_shot and isinstance(few_shot, Sequence) and not isinstance(
+            few_shot, (str, bytes)
+        ):
+            messages.extend(list(few_shot))
+
+        messages.append({"role": "user", "content": prompt})
         model_input = self.renderer.build_generation_prompt(messages)
         if not isinstance(model_input, tinker.ModelInput):
             model_input = tinker.ModelInput.from_ints(list(model_input))
