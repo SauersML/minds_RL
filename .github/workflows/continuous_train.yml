@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       training_hours:
-        description: 'How many hours to train? (e.g. 0.5, 6.0)'
+        description: 'How many hours to train? (e.g. 0.5, 5.0)'
         required: true
         default: '5.8'
         type: string
@@ -56,19 +56,27 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull origin main --rebase
 
       - name: Commit and push training state
         if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 1. Stage the files
           git add data/current_checkpoint.txt data/training_history.jsonl data/samples.tsv
+          
+          # 2. Check if we actually have work to save
           if git diff --cached --quiet; then
             echo "No checkpoint changes to commit"
           else
+            # 3. Commit.
             git commit -m "📈 Training progress [skip ci]"
+            
+            # 4. Since we committed, Git can safely replay our commit 
+            #    on top of any new changes from the server.
             git pull --rebase origin main
+            
+            # 5. Push the result
             git push
           fi
 
