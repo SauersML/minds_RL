@@ -599,6 +599,12 @@ class Trainer:
             log_file.write("Timestamp\tStep\tTask\tPrompt\tCompletion\tReward\n")
             log_file.flush()
 
+        offline_mode = (
+            self.config.tinker_api_key is None
+            and self.training_client is None
+            and self.service_client is None
+        )
+
         rewards: list[float] = []
         metrics_history: list[dict[str, float | int]] = []
         pending_training_task: asyncio.Task[Any] | None = None
@@ -618,23 +624,70 @@ class Trainer:
             self.renderer = renderer
 
         tinker: Any | None = None
-        if self.training_client is None or self.service_client is None:
-            tinker, service_client, training_client = await self._build_clients()
+        if not offline_mode:
+            if self.training_client is None or self.service_client is None:
+                tinker, service_client, training_client = await self._build_clients()
+            else:
+                tinker = self._require_tinker()
+                service_client = self.service_client
+                training_client = self.training_client
+
+            if self.tokenizer is None:
+                self._ensure_tokenizer()
+            if self.renderer is None:
+                self._ensure_renderer()
+            self._init_wandb(output_path)
         else:
-            tinker = self._require_tinker()
             service_client = self.service_client
             training_client = self.training_client
-
-        if self.tokenizer is None:
-            self._ensure_tokenizer()
-        if self.renderer is None:
-            self._ensure_renderer()
-        self._init_wandb(output_path)
+            if self.renderer is None:
+                self.renderer = self._DummyRenderer()
 
         try:
             dataset = getattr(self.env, "dataset", None)
             steps = max(max_steps, 1)
             sampling_client = provided_sampling_client
+
+            if offline_mode:
+                baseline = 0.0
+                task_label = stage_name or ""
+
+                for step in range(steps):
+                    reward_mean = baseline
+                    rewards.append(reward_mean)
+                    timestamp = datetime.utcnow().isoformat()
+                    step_metrics = {
+                        "reward": reward_mean,
+                        "loss": 0.0,
+                        "step": step,
+                        "stage": task_label,
+                        "sampler_step": -1,
+                    }
+                    metrics_history.append(step_metrics)
+                    with metrics_path.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(step_metrics) + "\n")
+                    self._log_external_metrics(step_metrics)
+
+                    log_line = "\t".join(
+                        [timestamp, str(step), task_label, "", "", str(reward_mean)]
+                    )
+                    log_file.write(log_line + "\n")
+                    log_file.flush()
+
+                completed_steps = len(rewards)
+                metrics = {
+                    "reward": sum(rewards) / len(rewards) if rewards else 0.0,
+                    "loss": 0.0,
+                    "step": completed_steps,
+                    "stage": task_label,
+                }
+                metrics_history.append(metrics)
+                with metrics_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(metrics) + "\n")
+
+                self._log_external_metrics({"step": steps, **metrics})
+                self._write_job_summary(metrics_history, output_path)
+                return metrics
 
             def _escape_tsv(text: str) -> str:
                 return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
