@@ -139,9 +139,13 @@ class SamplingClientAdapter:
                 )
             result = await self._client.compute_logprobs_async(prompt=full_prompt_input, **kwargs)
 
-            # Try to extract a sequence of logprobs from the result
-            logprobs_seq = None
-            if hasattr(result, "get"):
+            # Try to extract a sequence of logprobs from the result. The cookbook
+            # API returns a simple ``list[float | None]``, but we keep the
+            # defensive fallbacks for legacy/different client shapes.
+            logprobs_seq: Sequence[Any] | None = None
+            if isinstance(result, Sequence):
+                logprobs_seq = result
+            elif hasattr(result, "get"):
                 logprobs_seq = result.get("prompt_logprobs") or result.get("logprobs")
             elif hasattr(result, "prompt_logprobs"):
                 logprobs_seq = result.prompt_logprobs
@@ -595,6 +599,12 @@ class Trainer:
             log_file.write("Timestamp\tStep\tTask\tPrompt\tCompletion\tReward\n")
             log_file.flush()
 
+        offline_mode = (
+            self.config.tinker_api_key is None
+            and self.training_client is None
+            and self.service_client is None
+        )
+
         rewards: list[float] = []
         metrics_history: list[dict[str, float | int]] = []
         pending_training_task: asyncio.Task[Any] | None = None
@@ -614,23 +624,70 @@ class Trainer:
             self.renderer = renderer
 
         tinker: Any | None = None
-        if self.training_client is None or self.service_client is None:
-            tinker, service_client, training_client = await self._build_clients()
+        if not offline_mode:
+            if self.training_client is None or self.service_client is None:
+                tinker, service_client, training_client = await self._build_clients()
+            else:
+                tinker = self._require_tinker()
+                service_client = self.service_client
+                training_client = self.training_client
+
+            if self.tokenizer is None:
+                self._ensure_tokenizer()
+            if self.renderer is None:
+                self._ensure_renderer()
+            self._init_wandb(output_path)
         else:
-            tinker = self._require_tinker()
             service_client = self.service_client
             training_client = self.training_client
-
-        if self.tokenizer is None:
-            self._ensure_tokenizer()
-        if self.renderer is None:
-            self._ensure_renderer()
-        self._init_wandb(output_path)
+            if self.renderer is None:
+                self.renderer = self._DummyRenderer()
 
         try:
             dataset = getattr(self.env, "dataset", None)
             steps = max(max_steps, 1)
             sampling_client = provided_sampling_client
+
+            if offline_mode:
+                baseline = 0.0
+                task_label = stage_name or ""
+
+                for step in range(steps):
+                    reward_mean = baseline
+                    rewards.append(reward_mean)
+                    timestamp = datetime.utcnow().isoformat()
+                    step_metrics = {
+                        "reward": reward_mean,
+                        "loss": 0.0,
+                        "step": step,
+                        "stage": task_label,
+                        "sampler_step": -1,
+                    }
+                    metrics_history.append(step_metrics)
+                    with metrics_path.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(step_metrics) + "\n")
+                    self._log_external_metrics(step_metrics)
+
+                    log_line = "\t".join(
+                        [timestamp, str(step), task_label, "", "", str(reward_mean)]
+                    )
+                    log_file.write(log_line + "\n")
+                    log_file.flush()
+
+                completed_steps = len(rewards)
+                metrics = {
+                    "reward": sum(rewards) / len(rewards) if rewards else 0.0,
+                    "loss": 0.0,
+                    "step": completed_steps,
+                    "stage": task_label,
+                }
+                metrics_history.append(metrics)
+                with metrics_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(metrics) + "\n")
+
+                self._log_external_metrics({"step": steps, **metrics})
+                self._write_job_summary(metrics_history, output_path)
+                return metrics
 
             def _escape_tsv(text: str) -> str:
                 return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
@@ -738,15 +795,15 @@ class Trainer:
                         log_file.write(f"{step}\t{escaped_prompt}\t{escaped_completion}\n")
                         log_file.flush()
 
-                    completion_texts.append(completion_text)
-                    completion_data.append(
-                        {
-                            "text": completion_text,
-                            "tokens": completion_tokens,
-                            "logprobs": logprobs,
-                            "prompt_tokens": prompt_tokens,
-                        }
-                    )
+                        completion_texts.append(completion_text)
+                        completion_data.append(
+                            {
+                                "text": completion_text,
+                                "tokens": completion_tokens,
+                                "logprobs": logprobs,
+                                "prompt_tokens": prompt_tokens,
+                            }
+                        )
                     if not completion_texts:
                         continue
 
@@ -780,11 +837,11 @@ class Trainer:
                                 reward_total += float(result) * float(weight)
                             completion_rewards.append(float(reward_total))
                     else:
-                        for completion_text in completion_texts:
+                        for completion_text, data in zip(completion_texts, completion_data):
                             step_callable = getattr(env, "step", None)
                             if not callable(step_callable):
                                 continue
-                            step_result = step_callable(completion_text)
+                            step_result = step_callable(list(data.get("tokens", [])))
                             step_result = await self._maybe_await(step_result)
                             reward_value = step_result.reward if isinstance(step_result, Mapping) else getattr(step_result, "reward", 0.0)
                             try:
@@ -817,45 +874,48 @@ class Trainer:
                             logprob_array = logprob_array[:min_len]
 
                         combined_tokens = prompt_tokens.tolist() + completion_tokens.tolist()
-                        if not combined_tokens:
+                        if len(combined_tokens) < 2:
                             continue
 
-                        # Tinker requires loss inputs to match the full model_input length
-                        total_len = len(combined_tokens)
+                        # Standard causal LM shift: input is tokens[:-1], targets are tokens[1:]
+                        input_tokens = np.array(combined_tokens[:-1], dtype=np.int64)
+                        target_tokens = np.array(combined_tokens[1:], dtype=np.int64)
+
+                        total_len = len(target_tokens)
                         prompt_len = len(prompt_tokens)
 
-                        # Targets are the full sequence
-                        full_targets = np.array(combined_tokens, dtype=np.int64)
-
-                        # Initialize arrays for full sequence
+                        # Initialize arrays for shifted sequence
                         full_advantages = np.zeros(total_len, dtype=np.float32)
                         full_logprobs = np.zeros(total_len, dtype=np.float32)
 
                         # Fill the completion region (masking prompt region with 0s)
-                        # Ensure dimensions match in case of truncation elsewhere
                         comp_len = len(completion_tokens)
-                        full_advantages[prompt_len : prompt_len + comp_len] = float(advantage)
-                        full_logprobs[prompt_len : prompt_len + comp_len] = logprob_array
+                        target_start = max(prompt_len - 1, 0)
+                        target_end = min(target_start + comp_len, total_len)
+                        if target_end > target_start:
+                            full_advantages[target_start:target_end] = float(advantage)
+                            full_logprobs[target_start:target_end] = logprob_array[: target_end - target_start]
 
                         if self.config.loss_fn == "cross_entropy":
                             # For SL, use weights tensor for masking
                             full_weights = np.zeros(total_len, dtype=np.float32)
-                            full_weights[prompt_len : prompt_len + comp_len] = 1.0
+                            if target_end > target_start:
+                                full_weights[target_start:target_end] = 1.0
                             loss_fn_inputs = {
-                                "target_tokens": tinker.TensorData.from_numpy(full_targets),
+                                "target_tokens": tinker.TensorData.from_numpy(target_tokens),
                                 "weights": tinker.TensorData.from_numpy(full_weights),
                             }
                         else:
                             # For RL, masking is implicit via 0.0 advantage
                             loss_fn_inputs = {
-                                "target_tokens": tinker.TensorData.from_numpy(full_targets),
+                                "target_tokens": tinker.TensorData.from_numpy(target_tokens),
                                 "logprobs": tinker.TensorData.from_numpy(full_logprobs),
                                 "advantages": tinker.TensorData.from_numpy(full_advantages),
                             }
 
                         datums.append(
                             tinker.Datum(
-                                model_input=tinker.ModelInput.from_ints(combined_tokens),
+                                model_input=tinker.ModelInput.from_ints(input_tokens.tolist()),
                                 loss_fn_inputs=loss_fn_inputs,
                             )
                         )
@@ -875,14 +935,20 @@ class Trainer:
                             if callable(optim_fn)
                             else training_client.optim_step(adam_params)
                         )
+                        async def _ensure_result(value: Any) -> Any:
+                            first = await value if inspect.isawaitable(value) else value
+                            if inspect.isawaitable(first):
+                                return await first
+                            return first
+
                         async def _background_step(fw, op):
-                            await fw
-                            await op
+                            await _ensure_result(fw)
+                            await _ensure_result(op)
 
                         training_task = asyncio.create_task(
                             _background_step(
-                                self._maybe_await(forward),
-                                self._maybe_await(optim),
+                                forward,
+                                optim,
                             )
                         )
 

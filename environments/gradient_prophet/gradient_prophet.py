@@ -8,6 +8,8 @@ import random
 import re
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
+import tinker
+
 import numpy as np
 
 from tinker_cookbook.rl.types import Env, StepResult
@@ -122,37 +124,74 @@ async def _prompt_distributions(client: Any, prompt: str) -> list[dict[str, floa
 def _extract_prompt_distributions(result: Any) -> list[dict[str, float]]:
     if result is None:
         return []
+
+    def _append_distributions(logprob_list: Any, distributions: list[dict[str, float]]) -> None:
+        if not (isinstance(logprob_list, Sequence) and not isinstance(logprob_list, (str, bytes))):
+            return
+        for token_probs in logprob_list:
+            token_map: dict[str, float] = {}
+            if isinstance(token_probs, Mapping):
+                topk = token_probs.get("top_logprobs") or token_probs.get("topk")
+                if isinstance(topk, Sequence):
+                    for candidate in topk:
+                        if isinstance(candidate, Mapping):
+                            token = candidate.get("token")
+                            lp = candidate.get("logprob")
+                            if isinstance(token, str) and isinstance(lp, (int, float)):
+                                token_map[token] = float(lp)
+            elif hasattr(token_probs, "top_logprobs"):
+                topk_attr = getattr(token_probs, "top_logprobs", None)
+                if isinstance(topk_attr, Sequence):
+                    for candidate in topk_attr:
+                        token_val = getattr(candidate, "token", None)
+                        lp_val = getattr(candidate, "logprob", None)
+                        if isinstance(token_val, str) and isinstance(lp_val, (int, float)):
+                            token_map[token_val] = float(lp_val)
+            if token_map:
+                distributions.append(token_map)
+
+    distributions: list[dict[str, float]] = []
+
+    # Primary: SampleResponse stores prompt logprobs at the top level.
+    primary_logprobs = None
+    if hasattr(result, "topk_prompt_logprobs"):
+        primary_logprobs = getattr(result, "topk_prompt_logprobs", None)
+    elif hasattr(result, "prompt_logprobs"):
+        primary_logprobs = getattr(result, "prompt_logprobs", None)
+    elif isinstance(result, Mapping) and "topk_prompt_logprobs" in result:
+        primary_logprobs = result.get("topk_prompt_logprobs")
+    elif isinstance(result, Mapping) and "prompt_logprobs" in result:
+        primary_logprobs = result.get("prompt_logprobs")
+
+    _append_distributions(primary_logprobs, distributions)
+    if distributions:
+        return distributions
+
+    # Fallbacks for legacy or alternative response shapes.
     payload: Iterable[Any]
-    if isinstance(result, Mapping) and "data" in result:
+    if hasattr(result, "sequences"):
+        payload = getattr(result, "sequences", []) or []
+    elif isinstance(result, Mapping) and "data" in result:
         payload = result.get("data") or []
     elif isinstance(result, Sequence):
         payload = result
     else:
         payload = []
 
-    distributions: list[dict[str, float]] = []
     for entry in payload:
         logprob_list = None
-        if isinstance(entry, Mapping) and "prompt_logprobs" in entry:
+        if hasattr(entry, "topk_prompt_logprobs"):
+            logprob_list = getattr(entry, "topk_prompt_logprobs", None)
+        elif hasattr(entry, "prompt_logprobs"):
+            logprob_list = getattr(entry, "prompt_logprobs", None)
+        elif isinstance(entry, Mapping) and "prompt_logprobs" in entry:
             logprob_list = entry.get("prompt_logprobs")
         elif isinstance(entry, Mapping) and "choices" in entry:
             choices = entry.get("choices") or []
             if isinstance(choices, Sequence) and choices and isinstance(choices[0], Mapping):
                 logprob_list = choices[0].get("prompt_logprobs")
-        if isinstance(logprob_list, Sequence):
-            for token_probs in logprob_list:
-                token_map: dict[str, float] = {}
-                if isinstance(token_probs, Mapping):
-                    topk = token_probs.get("top_logprobs") or token_probs.get("topk")
-                    if isinstance(topk, Sequence):
-                        for candidate in topk:
-                            if isinstance(candidate, Mapping):
-                                token = candidate.get("token")
-                                lp = candidate.get("logprob")
-                                if isinstance(token, str) and isinstance(lp, (int, float)):
-                                    token_map[token] = float(lp)
-                if token_map:
-                    distributions.append(token_map)
+        _append_distributions(logprob_list, distributions)
+
     return distributions
 
 
@@ -262,15 +301,16 @@ class GradientProphetEnv(Env):
         self.parser = ProphetParser()
         self.sampling_client = sampling_client
 
-    def initial_observation(self) -> str:
-        return str(self.sample.get("prompt", ""))
+    def initial_observation(self) -> tinker.ModelInput:
+        prompt_text = str(self.sample.get("prompt", ""))
+        return tinker.ModelInput.from_text(prompt_text)
 
     async def step(self, action: Any) -> StepResult:  # type: ignore[override]
         reward = await self._evaluate_reward(action)
         return StepResult(
             reward=reward,
             episode_done=True,
-            next_observation="",
+            next_observation=tinker.ModelInput.from_ints([]),
             next_stop_condition=[],
             metrics={"task": self.sample.get("task", "")},
         )
@@ -291,11 +331,35 @@ class GradientProphetEnv(Env):
         return await self._reward_surprise(predictions, lesson_input, lesson_target, probes)
 
     def _parse_predictions(self, action: Any) -> list[float]:
-        completion: Messages = [{"role": "assistant", "content": str(action)}]
+        completion: Messages = [{"role": "assistant", "content": self._decode_action(action)}]
         parsed = self.parser.parse_answer(completion)
         if parsed is None:
             return []
         return parsed
+
+    def _decode_action(self, action: Any) -> str:
+        if isinstance(action, str):
+            return action
+        if isinstance(action, Sequence):
+            try:
+                tokens = [int(x) for x in action]
+            except Exception:
+                tokens = None
+            if tokens is not None:
+                tokenizer = getattr(self.sampling_client, "tokenizer", None)
+                if hasattr(tokenizer, "decode"):
+                    try:
+                        return str(tokenizer.decode(tokens, skip_special_tokens=True))
+                    except Exception:
+                        pass
+                try:
+                    text_val = tinker.ModelInput.from_ints(tokens).to_text()
+                    if isinstance(text_val, str):
+                        return text_val
+                except Exception:
+                    pass
+                return " ".join(str(tok) for tok in tokens)
+        return str(action)
 
     async def _reward_in_context(
         self,

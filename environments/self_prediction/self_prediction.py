@@ -298,10 +298,10 @@ class _RewardHelper:
         if predicted_number is None or answer_number is None:
             return 0.0, report.get("confidence")
 
-        relative_error = abs(answer_number - predicted_number) / max(abs(answer_number), 1.0)
-        continuous_score = 1.0 / (1.0 + alpha * relative_error)
-        scaled_score = min(beta * continuous_score, 1.0)
-        return scaled_score, report.get("confidence")
+        if predicted_number == answer_number:
+            return 1.0, report.get("confidence")
+
+        return 0.0, report.get("confidence")
 
     def correctness(
         self,
