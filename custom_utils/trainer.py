@@ -182,22 +182,6 @@ class Trainer:
         self.renderer: RendererType | None = None
         self._wandb_run: Any | None = None
 
-    class _DummyTokenizer:
-        """Lightweight tokenizer used when transformers models are unavailable."""
-
-        def apply_chat_template(self, messages: Any, add_generation_prompt: bool = True, tokenize: bool = True):
-            del add_generation_prompt, tokenize
-            content = "\n".join(str(msg.get("content", "")) for msg in messages if isinstance(msg, Mapping))
-            return [len(content) % 7, len(content) % 5, len(content) % 3]
-
-        def decode(self, tokens: Sequence[int], skip_special_tokens: bool = True):
-            del skip_special_tokens
-            return " ".join(str(token) for token in tokens)
-
-        def encode(self, text: str, add_special_tokens: bool = True):
-            del add_special_tokens
-            return [ord(c) % 1000 for c in text]
-
     class _DummyRenderer:
         def build_generation_prompt(self, messages: Any) -> list[int]:
             content = "\n".join(str(msg.get("content", "")) for msg in messages if isinstance(msg, Mapping))
@@ -205,17 +189,6 @@ class Trainer:
 
         def get_stop_sequences(self) -> list[str]:
             return []
-
-    class _DummyCompleter:
-        def __init__(self, sampling_client: Any, max_tokens: int = 256):
-            self.sampling_client = sampling_client
-            self.max_tokens = max_tokens
-
-        async def __call__(self, model_input: Any, stop_sequences: list[str]) -> Any:
-            class DummyTokens:
-                tokens = [0, 1, 2]
-                logprobs = [0.0, 0.0, 0.0]
-            return DummyTokens()
 
 
     async def _maybe_await(self, value: Any) -> Any:
@@ -398,28 +371,28 @@ class Trainer:
             if tinker_get_tokenizer is not None:
                 self.tokenizer = tinker_get_tokenizer(self.config.base_model)
                 return
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError("Failed to load tokenizer via tinker_cookbook") from exc
 
         self._require_tinker()
         spec = importlib.util.find_spec("transformers")
         if spec is None:
-            self.tokenizer = self._DummyTokenizer()
-            return
+            raise ModuleNotFoundError(
+                "transformers is required for training; install it to load a tokenizer."
+            )
 
         transformers = importlib.import_module("transformers")
         auto_tokenizer = getattr(transformers, "AutoTokenizer", None)
         if auto_tokenizer is None:
-            self.tokenizer = self._DummyTokenizer()
-            return
+            raise ImportError("transformers.AutoTokenizer is required for training")
 
         try:
             self.tokenizer = auto_tokenizer.from_pretrained(
                 self.config.base_model,
                 trust_remote_code=True,
             )
-        except Exception:
-            self.tokenizer = self._DummyTokenizer()
+        except Exception as exc:
+            raise RuntimeError("Failed to load tokenizer from transformers") from exc
 
     def _ensure_renderer(self) -> None:
         if self.renderer is not None:
@@ -727,16 +700,14 @@ class Trainer:
                     completion_texts: list[str] = []
                     completion_data: list[dict[str, Any]] = []
                     for _ in range(self.config.rollouts_per_example):
-                        if TinkerTokenCompleter is not None:
-                            completer = TinkerTokenCompleter(
-                                sampling_client=sampling_client,
-                                max_tokens=self.config.max_new_tokens,
+                        if TinkerTokenCompleter is None:
+                            raise ModuleNotFoundError(
+                                "tinker_cookbook.completers.TinkerTokenCompleter is required for training"
                             )
-                        else:
-                            completer = self._DummyCompleter(
-                                sampling_client=sampling_client,
-                                max_tokens=self.config.max_new_tokens,
-                            )
+                        completer = TinkerTokenCompleter(
+                            sampling_client=sampling_client,
+                            max_tokens=self.config.max_new_tokens,
+                        )
                         tokens_with_logprobs = await completer(model_input, stop_sequences)
 
                         completion_tokens = tokens_with_logprobs.tokens
