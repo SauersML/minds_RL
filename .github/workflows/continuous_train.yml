@@ -2,6 +2,12 @@ name: Continuous Training
 
 on:
   workflow_dispatch:
+    inputs:
+      training_hours:
+        description: 'How many hours to train? (e.g. 0.5, 6.0)'
+        required: true
+        default: '5.8'
+        type: string
   schedule:
     - cron: '0 5 * * *'
 
@@ -31,7 +37,16 @@ jobs:
           pip install -e "./environments/gradient_prophet"
 
       - name: Run curriculum
-        run: python continuous_runner.py
+        env:
+          HOURS: ${{ inputs.training_hours || '5.8' }}
+        run: |
+          SECONDS_LIMIT=$(python -c "print(int(float('$HOURS') * 3600))")
+
+          echo "🕒 Target Duration: $HOURS hours"
+          echo "⏱️ Time Limit: $SECONDS_LIMIT seconds"
+
+          export CURRICULUM_TIME_LIMIT_SECONDS=$SECONDS_LIMIT
+          python continuous_runner.py
 
       - name: Configure git for checkpoint commits
         if: always()
