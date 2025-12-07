@@ -235,12 +235,16 @@ def _spearman_corr(predicted_order: Sequence[int], actual_order: Sequence[int]) 
 def _kl_from_distributions(prior: dict[str, float], post: dict[str, float]) -> float:
     if not prior or not post:
         return 0.0
+    observed_prior_mass = sum(math.exp(lp) for lp in prior.values())
+    missing_prior_mass = max(0.0, 1.0 - observed_prior_mass)
+    new_token_count = sum(1 for token in post if token not in prior)
+    fallback_prob = max(missing_prior_mass / max(1, new_token_count), 1e-8)
+    lp_fallback = math.log(fallback_prob)
+
     kl = 0.0
     for token, lp_post in post.items():
-        lp_prior = prior.get(token)
-        if lp_prior is None:
-            continue
         p_post = math.exp(lp_post)
+        lp_prior = prior.get(token, lp_fallback)
         kl += p_post * (lp_post - lp_prior)
     return kl
 
