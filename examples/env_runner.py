@@ -4,6 +4,7 @@ import subprocess
 import time
 from pathlib import Path
 import importlib
+import json
 
 # Ensure project root is in sys.path so 'custom_utils' (flat layout) is importable
 if os.getcwd() not in sys.path:
@@ -122,13 +123,18 @@ def run_integration_test(env_path):
         trainer.train(max_steps=MAX_STEPS, output_dir=run_dir)
         
         # Validation
-        metrics_file = run_dir / "metrics.json"
+        metrics_file = run_dir / "metrics.jsonl"
         if metrics_file.exists():
-            import json
-            data = json.loads(metrics_file.read_text())
-            last_reward = data[-1].get("reward", "N/A")
-            print(f"   ✅ SUCCESS! Final Reward: {last_reward}")
-            return True
+            with metrics_file.open() as f:
+                data = [json.loads(line) for line in f if line.strip()]
+
+            if data:
+                last_reward = data[-1].get("reward", "N/A")
+                print(f"   ✅ SUCCESS! Final Reward: {last_reward}")
+                return True
+
+            print("   ⚠️  Metrics file is empty.")
+            return False
         else:
             print("   ⚠️  Finished, but no metrics file generated.")
             return False
