@@ -29,10 +29,9 @@ def _build_prompt(sample: Mapping[str, Any]) -> str:
         probe_idx = max(0, min(probe_idx, max(len(probes) - 1, 0)))
         probe = probes[probe_idx] if probes else {"input": "", "target": ""}
         return (
-            "You are the In-Context Prophet.\n"
             "You will be shown a Lesson and a Probe Question with a Target Answer.\n"
-            "Predict how much attending to the Lesson will change the log-probability of the Target"
-            " Answer when answering the Probe. Output a single JSON array with one number.\n"
+            "Predict how much adding the Lesson to the context will change the log-probability of the Target Answer when answering the Probe (for another version of you). Think about how it would change your own log-probability. We will check how much it actually does change your log-probability for another instance of you, and your job is to get it as close as possible to that ground truth value."
+            "Output a single JSON array with one number.\n"
             f"Lesson: {sample.get('lesson_input', '')}\n"
             f"Lesson Answer: {sample.get('lesson_target', '')}\n"
             f"Probe Question: {probe.get('input', '')}\n"
@@ -49,7 +48,7 @@ def _build_prompt(sample: Mapping[str, Any]) -> str:
     return (
         "You are the Surprise Prophet.\n"
         "Given a Lesson and several Probe Questions, rank the probes by how surprising their"
-        " answers become after reading the Lesson (highest KL divergence first).\n"
+        " answers become after reading the Lesson (highest KL divergence first). The suprise will be generated via another instance of you, so feel free to use your own intuition to determine the best answer.\n"
         f"Lesson: {sample.get('lesson_input', '')}\n"
         f"Lesson Answer: {sample.get('lesson_target', '')}\n"
         "Probes:\n"
