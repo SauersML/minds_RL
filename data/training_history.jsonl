@@ -138,3 +138,23 @@
 {"reward": 0.23847527811303734, "loss": 0.0, "step": 10, "stage": "train_prophet"}
 {"reward": 0.3779687285423279, "loss": 0.0, "step": 0, "stage": "train_self_pred", "sampler_step": 0}
 {"reward": 0.3779687285423279, "loss": 0.0, "step": 1, "stage": "train_self_pred"}
+{"reward": 0.0716271698474884, "loss": 0.0, "step": 0, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.8482308387756348, "loss": 0.0, "step": 1, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.00994307640939951, "loss": 0.0, "step": 2, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.4677128791809082, "loss": 0.0, "step": 3, "stage": "train_prophet", "sampler_step": 0}
+{"reward": -0.39220529794692993, "loss": 0.0, "step": 4, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.0668472945690155, "loss": 0.0, "step": 5, "stage": "train_prophet", "sampler_step": 0}
+{"reward": -0.5241420269012451, "loss": 0.0, "step": 6, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.016138646751642227, "loss": 0.0, "step": 7, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.24234209954738617, "loss": 0.0, "step": 8, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.5135332345962524, "loss": 0.0, "step": 9, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.1320027914829552, "loss": 0.0, "step": 10, "stage": "train_prophet"}
+{"reward": -1.398563027381897, "loss": 0.0, "step": 0, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 1.6296437978744507, "loss": 0.0, "step": 1, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 2.722097635269165, "loss": 0.0, "step": 2, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 0.1934521198272705, "loss": 0.0, "step": 3, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 2.1989450454711914, "loss": 0.0, "step": 4, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -2.5996627807617188, "loss": 0.0, "step": 5, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 0.45765213171641034, "loss": 0.0, "step": 6, "stage": "train_ghost"}
+{"reward": 0.0, "loss": 0.0, "step": 0, "stage": "train_ghost"}
+{"reward": 0.0, "loss": 0.0, "step": 0, "stage": "train_ghost"}
