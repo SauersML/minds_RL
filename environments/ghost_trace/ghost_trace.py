@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 import random
 import re
 from typing import Any, Mapping, MutableMapping, Sequence
@@ -13,10 +14,14 @@ ChatMessage = Mapping[str, Any]
 Messages = list[ChatMessage]
 
 
-WORD_BANK: tuple[str, ...] = (
-
-// Change this to load from environments/ghost_trace/word_bank.txt instead of hard-coding words here
-
+WORD_BANK_PATH = Path(__file__).with_name("word_bank.txt")
+WORD_BANK: tuple[str, ...] = tuple(
+    word.strip('"')
+    for word in (
+        line.rstrip("\n\r ,")
+        for line in WORD_BANK_PATH.read_text().splitlines()
+    )
+    if word
 )
 
 
