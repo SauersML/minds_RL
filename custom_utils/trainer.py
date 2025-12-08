@@ -54,7 +54,7 @@ class TrainerConfig:
 class SamplingClientAdapter:
     def __init__(self, client: Any, tokenizer: Any) -> None:
         self._client = client
-        self._tokenizer = tokenizer
+        self.tokenizer = tokenizer
 
     @property
     def tokenizer(self) -> Any:
@@ -63,6 +63,10 @@ class SamplingClientAdapter:
         if hasattr(self._client, "tokenizer") and getattr(self._client, "tokenizer") is not None:
             return getattr(self._client, "tokenizer")
         return self._tokenizer
+
+    @tokenizer.setter
+    def tokenizer(self, value: Any) -> None:
+        self._tokenizer = value
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
