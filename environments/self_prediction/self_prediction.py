@@ -232,7 +232,7 @@ _FEW_SHOT: list[ChatMessage] = [
         "role": "assistant",
         "content": (
             "<think>I add 6 and 5 directly to reach 11 without carrying.</think>\n\n"
-            "FINAL ANSWER: 11\nCONFIDENCE: 0.98"
+            "FINAL ANSWER: 11\nCONFIDENCE: 0.99"
         ),
     },
 ]
