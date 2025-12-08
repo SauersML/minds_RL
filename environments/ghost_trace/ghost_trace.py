@@ -29,8 +29,7 @@ def _build_dataset(count: int = 5000, *, seed: int | None = None) -> list[dict[s
     rng = random.Random(seed)
     dataset: list[dict[str, Any]] = []
     prompt_template = (
-        "Target: {target_word}. Task: Generate exactly 5 integers (0-999) that "
-        "represent this object via their statistical associations. Output only the numbers."
+        "Target: {target_word}. Task: Generate exactly 5 integers (0-999) that represent this word via vibes, statistical associations, or anything else you'd like. You'll be the one guessing what the numbers mean later, so don't overthink it. Make sure another version of you could guesss the word from the numbers, so use your intuition or feel. Output only the numbers, nothing else."
     )
     for idx in range(count):
         target_word = rng.choice(WORD_BANK)
