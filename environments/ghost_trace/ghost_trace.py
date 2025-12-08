@@ -195,7 +195,7 @@ def _build_dataset(count: int = 5000, *, seed: int = 1337) -> list[dict[str, Any
 
 
 class GhostTraceParser(vf.Parser):
-    number_re = re.compile(r"^[\d,\s]+$")
+    number_re = re.compile(r"^\s*\d+(?:[\s,]+\d+)*\s*$")
 
     def parse(self, text: str) -> dict[str, Any] | None:  # type: ignore[override]
         sequence = self.parse_answer([{"role": "assistant", "content": text}])
@@ -204,15 +204,26 @@ class GhostTraceParser(vf.Parser):
         return {"sequence": sequence}
 
     def parse_answer(self, completion: Messages) -> str | None:  # type: ignore[override]
+        """Extract the numeric sequence from the completion text.
+
+        The model may include explanations or other chatter before or after the
+        numbers. This parser pulls out all digit groups and normalizes them into a
+        comma-separated string, returning ``None`` when no digits are found.
+        """
+
         if not completion:
             return None
+
         content = completion[-1].get("content")
         if not isinstance(content, str):
             return None
-        trimmed = content.strip()
-        if not trimmed or not self.number_re.match(trimmed):
+
+        numbers = re.findall(r"\d+", content)
+        if not numbers:
             return None
-        return trimmed if any(ch.isdigit() for ch in trimmed) else None
+
+        sequence = ", ".join(numbers)
+        return sequence if self.number_re.match(sequence) else None
 
 
 def _extract_logprob_sequence(result: Any) -> list[float | None]:
