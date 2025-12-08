@@ -127,7 +127,6 @@ def main() -> None:
     ]
     max_steps = int(os.getenv("CURRICULUM_STEPS", "10"))
     time_budget_seconds = float(os.getenv("CURRICULUM_TIME_LIMIT_SECONDS", 21000))
-    buffer_seconds = float(os.getenv("CURRICULUM_TIME_BUFFER", 300))
     deadline = time.time() + time_budget_seconds
 
     base_trainer, service_client, training_client = _init_shared_clients(
