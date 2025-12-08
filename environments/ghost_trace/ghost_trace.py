@@ -175,7 +175,7 @@ WORD_BANK: tuple[str, ...] = (
 )
 
 
-def _build_dataset(count: int = 5000, *, seed: int = 1337) -> list[dict[str, Any]]:
+def _build_dataset(count: int = 5000, *, seed: int | None = None) -> list[dict[str, Any]]:
     rng = random.Random(seed)
     dataset: list[dict[str, Any]] = []
     prompt_template = (
@@ -399,7 +399,8 @@ def load_environment(num_examples: int = 5000, **kwargs: Any) -> GhostTraceEnv:
     parser = GhostTraceParser()
     rubric = _build_rubric(parser)
     rubric.parser = parser
-    dataset_list = _build_dataset(count)
+    seed = kwargs.get("seed")
+    dataset_list = _build_dataset(count, seed=seed)
     dataset = Dataset.from_list(dataset_list)
     return GhostTraceEnv(dataset=dataset, parser=parser, rubric=rubric, **kwargs)
 

@@ -306,7 +306,7 @@ class GradientProphetEnv(Env):
 
     def __init__(self, sample: Mapping[str, Any], sampling_client: Any) -> None:
         self.sample = dict(sample)
-        self.sample.setdefault("task", random.choice(["in_context", "surprise"]))
+        self.sample.setdefault("task", "in_context")
         if self.sample["task"] == "in_context":
             probes = self.sample.get("probes", []) or []
             self.sample["probe_index"] = int(self.sample.get("probe_index", 0)) % max(len(probes), 1)
@@ -470,18 +470,29 @@ class GradientProphetEnv(Env):
 class GradientProphetDatasetBuilder:
     """Prepare Prophet environments for Tinker RL runs."""
 
-    def __init__(self, samples: Sequence[Mapping[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        samples: Sequence[Mapping[str, Any]] | None = None,
+        *,
+        seed: int | None = None,
+    ) -> None:
+        self.rng = random.Random(seed)
         self.samples = list(samples) if samples is not None else build_semantic_tension_dataset()
+        self.rng.shuffle(self.samples)
 
     def build(self, sampling_client: Any) -> list[GradientProphetEnv]:
         envs: list[GradientProphetEnv] = []
         for sample in self.samples:
-            envs.append(GradientProphetEnv(sample, sampling_client))
+            sample_with_task = dict(sample)
+            if sample_with_task.get("task") not in {"in_context", "surprise"}:
+                sample_with_task["task"] = self.rng.choice(["in_context", "surprise"])
+            envs.append(GradientProphetEnv(sample_with_task, sampling_client))
         return envs
 
 
-def load_environment(**_: Any) -> GradientProphetDatasetBuilder:
-    return GradientProphetDatasetBuilder()
+def load_environment(**kwargs: Any) -> GradientProphetDatasetBuilder:
+    seed = kwargs.get("seed")
+    return GradientProphetDatasetBuilder(seed=seed)
 
 
 __all__ = ["GradientProphetEnv", "GradientProphetDatasetBuilder", "load_environment"]

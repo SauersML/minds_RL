@@ -133,7 +133,7 @@ def _generate_arithmetic_items(
     *,
     min_value: int = 0,
     max_value: int = 999,
-    seed: int = 1337,
+    seed: int | None = None,
 ) -> list[dict[str, Any]]:
     """Generate a synthetic dataset of arithmetic problems with extreme values."""
 
@@ -428,7 +428,8 @@ def load_environment(num_examples: int = 5000, **kwargs: Any) -> vf.SingleTurnEn
     parser = SelfPredictionParser()
     rubric = _build_rubric(parser)
     rubric.parser = parser
-    items = _generate_arithmetic_items(sample_count=sample_count)
+    seed = kwargs.get("seed")
+    items = _generate_arithmetic_items(sample_count=sample_count, seed=seed)
     dataset = Dataset.from_list(_build_dataset(items))
     return vf.SingleTurnEnv(
         dataset=dataset,
