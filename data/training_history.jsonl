@@ -70,3 +70,71 @@
 {"reward": 0.24453124403953552, "loss": 0.0, "step": 8, "stage": "train_self_pred", "sampler_step": 0}
 {"reward": 1.0, "loss": 0.0, "step": 9, "stage": "train_self_pred", "sampler_step": 0}
 {"reward": 0.9244429975748062, "loss": 0.0, "step": 10, "stage": "train_self_pred"}
+{"reward": -2.141587495803833, "loss": 0.0, "step": 0, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -3.465698719024658, "loss": 0.0, "step": 1, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -0.08251810073852539, "loss": 0.0, "step": 2, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 2.592911958694458, "loss": 0.0, "step": 3, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -3.053199291229248, "loss": 0.0, "step": 4, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -3.7191004753112793, "loss": 0.0, "step": 5, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -2.470236301422119, "loss": 0.0, "step": 6, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 5.343337059020996, "loss": 0.0, "step": 7, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 2.862008571624756, "loss": 0.0, "step": 8, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -2.705376625061035, "loss": 0.0, "step": 9, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -0.6839459419250489, "loss": 0.0, "step": 10, "stage": "train_ghost"}
+{"reward": 1.0, "loss": 0.0, "step": 0, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.32982873916625977, "loss": 0.0, "step": 1, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 2, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 3, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 4, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 5, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 6, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 7, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 8, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 9, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.9329828739166259, "loss": 0.0, "step": 10, "stage": "train_self_pred"}
+{"reward": 0.8197886943817139, "loss": 0.0, "step": 0, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.12466520816087723, "loss": 0.0, "step": 1, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.6016222238540649, "loss": 0.0, "step": 2, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.8022535443305969, "loss": 0.0, "step": 3, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.6135978698730469, "loss": 0.0, "step": 4, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.8686753511428833, "loss": 0.0, "step": 5, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.8018029928207397, "loss": 0.0, "step": 6, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.6140269041061401, "loss": 0.0, "step": 7, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.5389460921287537, "loss": 0.0, "step": 8, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.30705782771110535, "loss": 0.0, "step": 9, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.6092436708509922, "loss": 0.0, "step": 10, "stage": "train_prophet"}
+{"reward": 0.9031174778938293, "loss": 0.0, "step": 0, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.9999962449073792, "loss": 0.0, "step": 1, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 2, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 3, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 4, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 5, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.9999962449073792, "loss": 0.0, "step": 6, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 7, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 8, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 9, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.9903109967708588, "loss": 0.0, "step": 10, "stage": "train_self_pred"}
+{"reward": -8.416837692260742, "loss": 0.0, "step": 0, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -3.925830841064453, "loss": 0.0, "step": 1, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -4.269580841064453, "loss": 0.0, "step": 2, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 3.756587505340576, "loss": 0.0, "step": 3, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -0.4992673397064209, "loss": 0.0, "step": 4, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 6.284247398376465, "loss": 0.0, "step": 5, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 5.058318614959717, "loss": 0.0, "step": 6, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 2.451293468475342, "loss": 0.0, "step": 7, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 4.985144138336182, "loss": 0.0, "step": 8, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -4.197703838348389, "loss": 0.0, "step": 9, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 0.12263705730438232, "loss": 0.0, "step": 10, "stage": "train_ghost"}
+{"reward": 0.016489524394273758, "loss": 0.0, "step": 0, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.5172973871231079, "loss": 0.0, "step": 1, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.017746087163686752, "loss": 0.0, "step": 2, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.6628129482269287, "loss": 0.0, "step": 3, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.014396344311535358, "loss": 0.0, "step": 4, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.8017837405204773, "loss": 0.0, "step": 5, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.05234719067811966, "loss": 0.0, "step": 6, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.07200683653354645, "loss": 0.0, "step": 7, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.2172982394695282, "loss": 0.0, "step": 8, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.012574482709169388, "loss": 0.0, "step": 9, "stage": "train_prophet", "sampler_step": 0}
+{"reward": 0.23847527811303734, "loss": 0.0, "step": 10, "stage": "train_prophet"}
+{"reward": 0.3779687285423279, "loss": 0.0, "step": 0, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.3779687285423279, "loss": 0.0, "step": 1, "stage": "train_self_pred"}
