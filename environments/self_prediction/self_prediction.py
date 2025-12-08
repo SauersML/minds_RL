@@ -14,10 +14,26 @@ ChatMessage = Mapping[str, Any]
 Messages = list[ChatMessage]
 
 
+_BOXED_PATTERN = re.compile(r"\\boxed\s*(?:\{([^}]*)\}|([^\\s]+))", re.IGNORECASE)
+
+
+def _strip_boxed(value: str) -> str:
+    """Extract the contents of the last LaTeX ``\boxed{...}`` wrapper if present."""
+
+    matches = _BOXED_PATTERN.findall(value)
+    if not matches:
+        return value
+    # Each match is a tuple of (braced_content, bare_content). Prefer the braced
+    # group when available and fall back to the bare token otherwise.
+    last_braced, last_bare = matches[-1]
+    return last_braced or last_bare or value
+
+
 def _normalize_text(value: Optional[str]) -> str:
     if value is None:
         return ""
-    return "".join(ch.lower() for ch in value.strip() if ch.isalnum() or ch.isspace())
+    stripped = _strip_boxed(value.strip())
+    return "".join(ch.lower() for ch in stripped if ch.isalnum() or ch.isspace())
 
 
 def _strip_code_fence(text: str) -> str:
@@ -30,7 +46,8 @@ def _strip_code_fence(text: str) -> str:
 
 class SelfPredictionParser(vf.Parser):
     _THINK_PATTERN = re.compile(r"<think>(.*?)</think>", re.IGNORECASE | re.DOTALL)
-    _CONF_PATTERN = re.compile(r"(?i)confidence:\s*(\d+(?:\.\d*)?|\.\d+)")
+    _CONF_HEADER_PATTERN = re.compile(r"(?i)confidence:\s*(.+)")
+    _CONF_VALUE_PATTERN = re.compile(r"[-+]?\d+(?:\.\d+)?|\.\d+")
     _ANSWER_PATTERN = re.compile(r"(?i)final\s*answer:\s*(.*)")
 
     def _extract_thinking(self, text: str) -> tuple[str, str]:
@@ -71,11 +88,15 @@ class SelfPredictionParser(vf.Parser):
         return self._fallback_answer(text), False
 
     def _extract_confidence(self, text: str) -> tuple[float | None, bool]:
-        match = self._CONF_PATTERN.search(text)
-        if not match:
+        header = self._CONF_HEADER_PATTERN.search(text)
+        if not header:
+            return 0.5, False
+        tail = header.group(1)
+        value_match = self._CONF_VALUE_PATTERN.search(tail)
+        if not value_match:
             return 0.5, False
         try:
-            return float(match.group(1)), True
+            return float(value_match.group(0)), True
         except ValueError:
             return None, False
 

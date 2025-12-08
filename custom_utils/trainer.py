@@ -56,6 +56,14 @@ class SamplingClientAdapter:
         self._client = client
         self._tokenizer = tokenizer
 
+    @property
+    def tokenizer(self) -> Any:
+        """Expose a tokenizer for environments that need to decode token outputs."""
+
+        if hasattr(self._client, "tokenizer") and getattr(self._client, "tokenizer") is not None:
+            return getattr(self._client, "tokenizer")
+        return self._tokenizer
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
 
