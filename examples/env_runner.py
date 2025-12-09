@@ -83,7 +83,7 @@ loss_fn = "importance_sampling"
   [trainer.args]
   max_new_tokens = {MAX_TOKENS}
   training_rank = 8
-  learning_rate = 1e-4
+  learning_rate = 3.162e-6
 
 [model]
 base_model = "{TINKER_MODEL}"

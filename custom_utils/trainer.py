@@ -45,7 +45,7 @@ class TrainerConfig:
     loss_fn: str = "ppo"
     tinker_api_key: str | None = None
     training_rank: int = 32
-    learning_rate: float = 1e-4
+    learning_rate: float = 3.162e-6
     resume_checkpoint_id: str | None = None
     save_every_n_steps: int = 50
     update_sampler_every_n_steps: int = 10
@@ -330,7 +330,7 @@ class Trainer:
             loss_fn=str(trainer_cfg.get("loss_fn", "ppo")),
             tinker_api_key=api_key,
             training_rank=int(trainer_args.get("training_rank", 32)),
-            learning_rate=float(trainer_args.get("learning_rate", 1e-4)),
+            learning_rate=float(trainer_args.get("learning_rate", 3.162e-6)),
             resume_checkpoint_id=resume_checkpoint_id,
             save_every_n_steps=int(trainer_args.get("save_every_n_steps", 50)),
             update_sampler_every_n_steps=int(trainer_args.get("update_sampler_every_n_steps", 10)),
