@@ -158,3 +158,29 @@
 {"reward": 0.45765213171641034, "loss": 0.0, "step": 6, "stage": "train_ghost"}
 {"reward": 0.0, "loss": 0.0, "step": 0, "stage": "train_ghost"}
 {"reward": 0.0, "loss": 0.0, "step": 0, "stage": "train_ghost"}
+{"reward": 1.0, "loss": 0.0, "step": 0, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 1, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.9999924898147583, "loss": 0.0, "step": 2, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.9999962449073792, "loss": 0.0, "step": 3, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 4, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 5, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.8062499761581421, "loss": 0.0, "step": 6, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.9999924898147583, "loss": 0.0, "step": 7, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 8, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 1.0, "loss": 0.0, "step": 9, "stage": "train_self_pred", "sampler_step": 0}
+{"reward": 0.9806231200695038, "loss": 0.0, "step": 10, "stage": "train_self_pred"}
+{"reward": 0.6426230669021606, "loss": 0.0, "step": 0, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 1.1107840538024902, "loss": 0.0, "step": 1, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 1.3450498580932617, "loss": 0.0, "step": 2, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -2.2089462280273438, "loss": 0.0, "step": 3, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -1.9671604633331299, "loss": 0.0, "step": 4, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -3.4871127605438232, "loss": 0.0, "step": 5, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 3.481055974960327, "loss": 0.0, "step": 6, "stage": "train_ghost", "sampler_step": 0}
+{"reward": 2.338358163833618, "loss": 0.0, "step": 7, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -2.258315324783325, "loss": 0.0, "step": 8, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -4.948019504547119, "loss": 0.0, "step": 9, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -0.5951683163642884, "loss": 0.0, "step": 10, "stage": "train_ghost"}
+{"reward": 2.2775442600250244, "loss": 0.0, "step": 0, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -3.831188201904297, "loss": 0.0, "step": 1, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -3.5244522094726562, "loss": 0.0, "step": 2, "stage": "train_ghost", "sampler_step": 0}
+{"reward": -1.6926987171173096, "loss": 0.0, "step": 3, "stage": "train_ghost"}
