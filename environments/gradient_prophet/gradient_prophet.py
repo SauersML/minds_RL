@@ -78,7 +78,21 @@ class ProphetParser:
             end = content.index("]", start) + 1
             as_list = json.loads(content[start:end])
             if isinstance(as_list, list):
-                return [float(x) for x in as_list]
+                numbers: list[float] = []
+                for item in as_list:
+                    if isinstance(item, (int, float)):
+                        numbers.append(float(item))
+                    elif isinstance(item, str):
+                        try:
+                            numbers.append(float(item))
+                        except ValueError:
+                            continue
+                    elif isinstance(item, Mapping):
+                        idx_val = item.get("index")
+                        if isinstance(idx_val, (int, float)):
+                            numbers.append(float(idx_val))
+                if numbers:
+                    return numbers
         except (ValueError, json.JSONDecodeError):
             pass
         matches = self.number_re.findall(content)

@@ -114,6 +114,8 @@ async def _communication_reward(
     **kwargs: Any,
 ) -> float:
     del kwargs
+    if not isinstance(state, Mapping):
+        state = {}
     metadata = info.get("sample", {}).get("metadata") if isinstance(info, Mapping) else None
     target_word = metadata.get("target_word") if isinstance(metadata, Mapping) else None
     if not target_word:
