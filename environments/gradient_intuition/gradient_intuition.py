@@ -47,7 +47,10 @@ class GradientIntuitionParser(vf.Parser):
     def parse_answer(self, completion: Messages) -> str | None:  # type: ignore[override]
         if not completion:
             return None
-        content = completion[-1].get("content")
+        last = completion[-1]
+        if not isinstance(last, Mapping):
+            return None
+        content = last.get("content")
         if not isinstance(content, str):
             return None
         match = self._answer_pattern.search(content)
@@ -273,8 +276,10 @@ class GradientIntuitionEnv:
         self._current_prompt = base_prompt_str
 
         sample = getattr(self.inner_env, "state", {}).get("sample") if hasattr(self.inner_env, "state") else None
-        if not sample:
+        if not isinstance(sample, Mapping) or not sample:
             sample = self._sample_task()
+        if not isinstance(sample, Mapping):
+            sample = {}
         probe = get_random_probe(self.rng)
         self._current_sample = sample
         self._current_probe = probe
@@ -303,9 +308,11 @@ class GradientIntuitionEnv:
             info = {}
         parsed = None
         if completion:
-            content = completion[-1].get("content")
-            if isinstance(content, str):
-                parsed = self.parser.parse(content)
+            last = completion[-1] if isinstance(completion, Sequence) else None
+            if isinstance(last, Mapping):
+                content = last.get("content")
+                if isinstance(content, str):
+                    parsed = self.parser.parse(content)
         if not parsed:
             return 0.0
 
@@ -332,7 +339,13 @@ class GradientIntuitionEnv:
             return 0.0
         answer_value = sample.get("answer") if isinstance(sample, Mapping) else ""
         state: State = getattr(self.inner_env, "state", {}) if hasattr(self.inner_env, "state") else {}
-        prompt_msgs = [{"role": "user", "content": self._current_prompt or str(sample.get("prompt") or sample.get("question") or "")}]
+        prompt_msgs = [
+            {
+                "role": "user",
+                "content": self._current_prompt
+                or str(sample.get("prompt") or sample.get("question") or ""),
+            }
+        ]
         completion_msgs = [{"role": "assistant", "content": str(task_answer)}]
         info_map: dict[str, Any] = {"sample": sample}
         if isinstance(info, Mapping):
@@ -379,21 +392,29 @@ class GradientIntuitionEnv:
             return None
         input_tokens = np.array(tokens[:-1], dtype=np.int64)
         target_tokens = np.array(tokens[1:], dtype=np.int64)
+        weights = np.ones_like(target_tokens, dtype=np.float32)
         datum = tinker.Datum(
             model_input=tinker.ModelInput.from_ints(input_tokens.tolist()),
-            loss_fn_inputs={"target_tokens": tinker.TensorData.from_numpy(target_tokens)},
+            loss_fn_inputs={
+                "target_tokens": tinker.TensorData.from_numpy(target_tokens),
+                "weights": tinker.TensorData.from_numpy(weights),
+            },
         )
 
         forward_fn = getattr(client, "forward_async", None)
+        forward_kwargs = {"loss_fn": "cross_entropy"}
         if callable(forward_fn):
-            result = await forward_fn([datum])
+            result = await forward_fn([datum], **forward_kwargs)
         else:
             forward_sync = getattr(client, "forward", None)
             if not callable(forward_sync):
                 return None
-            result = forward_sync([datum])
+            result = forward_sync([datum], **forward_kwargs)
             if inspect.isawaitable(result):
                 result = await result
+
+        if hasattr(result, "result_async") and callable(result.result_async):
+            result = await result.result_async()
 
         logprob_seq = _extract_logprob_sequence(result)
         if len(logprob_seq) >= len(answer_tokens):
