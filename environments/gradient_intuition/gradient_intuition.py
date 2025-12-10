@@ -125,6 +125,78 @@ def _extract_logprob(result: Any) -> float | None:
     return None
 
 
+def _extract_logprob_sequence(result: Any) -> list[float]:
+    if result is None:
+        return []
+    if isinstance(result, Sequence) and not isinstance(result, Mapping):
+        return [float(x) for x in result if isinstance(x, (int, float))]
+    if isinstance(result, Mapping):
+        prompt_lp = result.get("prompt_logprobs") if hasattr(result, "get") else None
+        if isinstance(prompt_lp, Sequence) and prompt_lp:
+            return [float(x) for x in prompt_lp if isinstance(x, (int, float))]
+        if "logprobs" in result:
+            lp = result.get("logprobs")
+            if isinstance(lp, Sequence):
+                return [float(x) for x in lp if isinstance(x, (int, float))]
+        if "data" in result:
+            return _extract_logprob_sequence(result.get("data"))
+        choices = result.get("choices")
+        if isinstance(choices, Sequence) and choices:
+            return _extract_logprob_sequence(choices[0])
+    attr_lp = getattr(result, "logprobs", None)
+    if isinstance(attr_lp, Sequence):
+        return [float(x) for x in attr_lp if isinstance(x, (int, float))]
+    attr_data = getattr(result, "data", None)
+    if attr_data is not None:
+        return _extract_logprob_sequence(attr_data)
+    return []
+
+
+class _ShadowClientManager:
+    def __init__(
+        self,
+        *,
+        service_client: Any | None,
+        base_model: str | None,
+        shadow_rank: int,
+    ) -> None:
+        self.service_client = service_client
+        self.base_model = base_model
+        self.shadow_rank = shadow_rank
+        self.client: Any | None = None
+
+    async def get_client(self) -> Any | None:
+        if self.client is not None:
+            return self.client
+        if self.service_client is None or not self.base_model:
+            return None
+        creator = getattr(self.service_client, "create_lora_training_client_async", None)
+        if callable(creator):
+            self.client = await creator(base_model=self.base_model, rank=self.shadow_rank)
+        else:
+            creator_sync = getattr(self.service_client, "create_lora_training_client", None)
+            if not callable(creator_sync):
+                return None
+            self.client = creator_sync(base_model=self.base_model, rank=self.shadow_rank)
+        return self.client
+
+    async def reset_client(self) -> Any | None:
+        client = await self.get_client()
+        if client is None:
+            return None
+
+        for candidate in ("reset_parameters", "reset_adapter", "reset", "load_base_weights", "reload_base_weights"):
+            func = getattr(client, candidate, None)
+            if callable(func):
+                result = func()
+                if inspect.isawaitable(result):
+                    await result
+                return client
+
+        self.client = None
+        return await self.get_client()
+
+
 class GradientIntuitionEnv:
     """Wrap an existing environment with a gradient-prediction objective."""
 
@@ -139,6 +211,7 @@ class GradientIntuitionEnv:
         base_model: str | None = None,
         shadow_rank: int = 8,
         shadow_learning_rate: float = 1e-4,
+        shadow_manager: _ShadowClientManager | None = None,
     ) -> None:
         self.inner_env = inner_env
         self.alpha = alpha
@@ -151,9 +224,15 @@ class GradientIntuitionEnv:
         self.base_model = base_model
         self.shadow_rank = shadow_rank
         self.shadow_learning_rate = shadow_learning_rate
+        self._shadow_manager = shadow_manager or _ShadowClientManager(
+            service_client=service_client,
+            base_model=base_model,
+            shadow_rank=shadow_rank,
+        )
         self._shadow_client: Any | None = None
         self._current_sample: Mapping[str, Any] | None = None
         self._current_probe: Probe | None = None
+        self._current_prompt: str = ""
 
         async def _reward(
             prompt: Messages,
@@ -186,12 +265,21 @@ class GradientIntuitionEnv:
             return dataset[0]
 
     def initial_observation(self) -> str:
-        sample = self._sample_task()
+        base_prompt = self.inner_env.initial_observation()
+        try:
+            base_prompt_str = str(base_prompt)
+        except Exception:
+            base_prompt_str = "" if base_prompt is None else str(base_prompt)
+        self._current_prompt = base_prompt_str
+
+        sample = getattr(self.inner_env, "state", {}).get("sample") if hasattr(self.inner_env, "state") else None
+        if not sample:
+            sample = self._sample_task()
         probe = get_random_probe(self.rng)
         self._current_sample = sample
         self._current_probe = probe
 
-        prompt = str(sample.get("prompt") or sample.get("question") or "")
+        prompt = base_prompt_str or str(sample.get("prompt") or sample.get("question") or "")
         instructions = sample.get("instructions") or _DEF_INSTRUCTIONS
         probe_q = probe.get("question", "")
         probe_a = probe.get("answer", "")
@@ -241,8 +329,8 @@ class GradientIntuitionEnv:
         if inner_rubric is None:
             return 0.0
         answer_value = sample.get("answer") if isinstance(sample, Mapping) else ""
-        state: State = {}
-        prompt_msgs = [{"role": "user", "content": str(sample.get("prompt") or sample.get("question") or "")}]
+        state: State = getattr(self.inner_env, "state", {}) if hasattr(self.inner_env, "state") else {}
+        prompt_msgs = [{"role": "user", "content": self._current_prompt or str(sample.get("prompt") or sample.get("question") or "")}]
         completion_msgs = [{"role": "assistant", "content": str(task_answer)}]
         info_map: dict[str, Any] = {"sample": sample}
         if info:
@@ -259,37 +347,55 @@ class GradientIntuitionEnv:
                 continue
         return float(reward_total)
 
-    async def _compute_logprob(self, client: Any, probe_question: str, probe_answer: str) -> float | None:
-        if client is None:
+    async def _compute_logprob(self, client: Any, probe_question: str, probe_answer: str, tokenizer: Any) -> float | None:
+        if client is None or tokenizer is None:
             return None
-        if hasattr(client, "compute_logprobs_async"):
-            result = await client.compute_logprobs_async(prompt=f"{probe_question}\n", targets=[probe_answer])  # type: ignore[attr-defined]
-        else:
-            func = getattr(client, "compute_logprobs", None)
-            if func is None:
-                return None
-            maybe_result = func(prompt=f"{probe_question}\n", targets=[probe_answer])
-            result = await _maybe_await(maybe_result)
-        return _extract_logprob(result)
+        try:
+            import tinker
+        except ModuleNotFoundError:
+            return None
 
-    async def _ensure_shadow_client(self) -> Any:
+        question_tokens = tokenizer.encode(probe_question, add_special_tokens=False) if hasattr(tokenizer, "encode") else None
+        answer_tokens = tokenizer.encode(probe_answer, add_special_tokens=False) if hasattr(tokenizer, "encode") else None
+        if not question_tokens or not answer_tokens:
+            return None
+
+        full_tokens = list(question_tokens) + list(answer_tokens)
+        model_input = tinker.ModelInput.from_ints(full_tokens)
+        datum = tinker.Datum(model_input=model_input)
+
+        if hasattr(client, "compute_logprobs_async"):
+            result = await client.compute_logprobs_async(prompt=model_input)  # type: ignore[attr-defined]
+            logprob_seq = _extract_logprob_sequence(result)
+            if len(logprob_seq) >= len(answer_tokens):
+                return float(sum(logprob_seq[-len(answer_tokens) :]))
+
+        forward_fn = getattr(client, "forward_async", None)
+        if callable(forward_fn):
+            result = await forward_fn([datum])
+        else:
+            forward_sync = getattr(client, "forward", None)
+            if not callable(forward_sync):
+                return None
+            result = forward_sync([datum])
+            if inspect.isawaitable(result):
+                result = await result
+
+        logprob_seq = _extract_logprob_sequence(result)
+        if len(logprob_seq) >= len(answer_tokens):
+            return float(sum(logprob_seq[-len(answer_tokens) :]))
+
+        lp = _extract_logprob(result)
+        return float(lp) if lp is not None else None
+
+    async def _ensure_shadow_client(self, *, reset: bool = False) -> Any:
+        if reset:
+            self._shadow_client = await self._shadow_manager.reset_client()
+            return self._shadow_client
         if self._shadow_client is not None:
             return self._shadow_client
-        if self.service_client is None or not self.base_model:
-            return None
-        creator = getattr(self.service_client, "create_lora_training_client_async", None)
-        if callable(creator):
-            client = await creator(base_model=self.base_model, rank=self.shadow_rank)
-        else:
-            creator_sync = getattr(self.service_client, "create_lora_training_client", None)
-            if not callable(creator_sync):
-                return None
-            client = creator_sync(base_model=self.base_model, rank=self.shadow_rank)
-        self._shadow_client = client
-        return client
-
-    def _discard_shadow_client(self) -> None:
-        self._shadow_client = None
+        self._shadow_client = await self._shadow_manager.get_client()
+        return self._shadow_client
 
     async def _shadow_update(self, prompt_text: str, completion_text: str, tokenizer: Any) -> bool:
         shadow_client = await self._ensure_shadow_client()
@@ -331,22 +437,22 @@ class GradientIntuitionEnv:
         tokenizer = info.get("tokenizer") if isinstance(info, Mapping) else None
         if tokenizer is None:
             return None
-        shadow_client = await self._ensure_shadow_client()
+        shadow_client = await self._ensure_shadow_client(reset=True)
         if shadow_client is None:
             return None
 
         probe_question = probe.get("question", "")
         probe_answer = probe.get("answer", "")
-        pre_lp = await self._compute_logprob(shadow_client, probe_question, probe_answer)
+        pre_lp = await self._compute_logprob(shadow_client, probe_question, probe_answer, tokenizer)
         if pre_lp is None:
             return None
 
-        prompt_text = str(sample.get("prompt") or sample.get("question") or "")
+        prompt_text = self._current_prompt or str(sample.get("prompt") or sample.get("question") or "")
         updated = await self._shadow_update(prompt_text, task_answer, tokenizer)
         if not updated:
             return None
 
-        post_lp = await self._compute_logprob(shadow_client, probe_question, probe_answer)
+        post_lp = await self._compute_logprob(shadow_client, probe_question, probe_answer, tokenizer)
         if post_lp is None:
             return None
         return float(post_lp - pre_lp)
@@ -412,6 +518,11 @@ class GradientIntuitionBuilder:
         probes = self.probes if self.probes is not None else [get_random_probe(rng)]
         if not probes:
             probes = [get_random_probe()]
+        shadow_manager = _ShadowClientManager(
+            service_client=service_client,
+            base_model=base_model,
+            shadow_rank=self.shadow_rank,
+        )
         built_envs: list[GradientIntuitionEnv] = []
         for env in envs:
             built_envs.append(
@@ -424,6 +535,7 @@ class GradientIntuitionBuilder:
                     base_model=base_model,
                     shadow_rank=self.shadow_rank,
                     shadow_learning_rate=self.shadow_learning_rate,
+                    shadow_manager=shadow_manager,
                 )
             )
         return built_envs
