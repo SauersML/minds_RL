@@ -691,8 +691,21 @@ class Trainer:
 
                     envs: list[Any] = []
                     if hasattr(self.env, "build") and callable(getattr(self.env, "build")):
+                        build_kwargs = {}
                         try:
-                            envs = list(self.env.build(sampling_client))
+                            signature = inspect.signature(self.env.build)
+                            params = [p for p in signature.parameters.values() if p.name != "self"]
+                            param_names = {p.name for p in params}
+                            if "service_client" in param_names:
+                                build_kwargs["service_client"] = service_client
+                            if "training_client" in param_names:
+                                build_kwargs["training_client"] = training_client
+                            if "base_model" in param_names:
+                                build_kwargs["base_model"] = self.config.base_model
+                        except Exception:
+                            build_kwargs = {}
+                        try:
+                            envs = list(self.env.build(sampling_client, **build_kwargs))
                         except Exception:
                             envs = []
                     elif dataset is not None:
