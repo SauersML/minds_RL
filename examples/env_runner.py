@@ -68,15 +68,24 @@ def discover_and_install_envs():
 def generate_config(env_path, output_path):
     # Relative path for the config
     rel_path = f"./environments/{env_path.name}"
-    
+
+    if env_path.name == "gradient_intuition":
+        env_args_block = (
+            "[env.args]\n"
+            "inner_env_id = \"./environments/ghost_trace\"\n"
+            "inner_env_args = { num_examples = 3 }\n"
+            "alpha = 0.3\n"
+            "shadow_rank = 4\n"
+            "shadow_learning_rate = 5e-5\n\n"
+        )
+    else:
+        env_args_block = "[env.args]\nnum_examples = 5  # Small dataset for speed\n\n"
+
     toml_content = f"""
 [env]
 id = "{rel_path}"
 
-[env.args]
-num_examples = 5  # Small dataset for speed
-
-[trainer]
+{env_args_block}[trainer]
 rollouts_per_example = {ROLLOUTS}
 loss_fn = "importance_sampling"
 
