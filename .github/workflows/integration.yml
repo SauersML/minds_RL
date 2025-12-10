@@ -6,10 +6,6 @@ on:
     paths:
       - .github/workflows/integration.yml
       - .github/workflows/integration.yaml
-  pull_request:
-    paths:
-      - .github/workflows/integration.yml
-      - .github/workflows/integration.yaml
 
 jobs:
   real-api-test:
