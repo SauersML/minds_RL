@@ -47,7 +47,10 @@ class GradientIntuitionParser(vf.Parser):
     def parse_answer(self, completion: Messages) -> str | None:  # type: ignore[override]
         if not completion:
             return None
-        content = completion[-1].get("content")
+        last = completion[-1]
+        if not isinstance(last, Mapping):
+            return None
+        content = last.get("content")
         if not isinstance(content, str):
             return None
         match = self._answer_pattern.search(content)
@@ -303,9 +306,11 @@ class GradientIntuitionEnv:
             info = {}
         parsed = None
         if completion:
-            content = completion[-1].get("content")
-            if isinstance(content, str):
-                parsed = self.parser.parse(content)
+            last = completion[-1] if isinstance(completion, Sequence) else None
+            if isinstance(last, Mapping):
+                content = last.get("content")
+                if isinstance(content, str):
+                    parsed = self.parser.parse(content)
         if not parsed:
             return 0.0
 
@@ -332,7 +337,13 @@ class GradientIntuitionEnv:
             return 0.0
         answer_value = sample.get("answer") if isinstance(sample, Mapping) else ""
         state: State = getattr(self.inner_env, "state", {}) if hasattr(self.inner_env, "state") else {}
-        prompt_msgs = [{"role": "user", "content": self._current_prompt or str(sample.get("prompt") or sample.get("question") or "")}]
+        prompt_msgs = [
+            {
+                "role": "user",
+                "content": self._current_prompt
+                or str(sample.get("prompt") or sample.get("question") or ""),
+            }
+        ]
         completion_msgs = [{"role": "assistant", "content": str(task_answer)}]
         info_map: dict[str, Any] = {"sample": sample}
         if isinstance(info, Mapping):

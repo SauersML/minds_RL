@@ -2,6 +2,12 @@ name: Manual Integration Test (Real API)
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/integration.yml
+  pull_request:
+    paths:
+      - .github/workflows/integration.yml
 
 jobs:
   real-api-test:

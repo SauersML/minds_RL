@@ -63,7 +63,11 @@ class GhostTraceParser(vf.Parser):
         if not completion:
             return None
 
-        content = completion[-1].get("content")
+        last = completion[-1]
+        if not isinstance(last, Mapping):
+            return None
+
+        content = last.get("content")
         if not isinstance(content, str):
             return None
 
@@ -123,9 +127,11 @@ async def _communication_reward(
 
     sequence = (state.get("sequence") or "").strip()
     if not sequence:
-        content = completion[-1].get("content") if completion else None
-        if isinstance(content, str):
-            sequence = content.strip()
+        last = completion[-1] if completion else None
+        if isinstance(last, Mapping):
+            content = last.get("content")
+            if isinstance(content, str):
+                sequence = content.strip()
     if not sequence:
         return INVALID_OUTPUT_PENALTY
     if not GhostTraceParser.number_re.match(sequence) or not any(ch.isdigit() for ch in sequence):
@@ -190,12 +196,14 @@ def _build_rubric(parser: GhostTraceParser) -> vf.Rubric:
             **_: Any,
         ) -> float:
             state.setdefault("parser", parser)
-            content = completion[-1].get("content") if completion else None
-            if isinstance(content, str):
-                parsed = parser.parse(content)
-                if parsed:
-                    if "sequence" in parsed:
-                        state.setdefault("sequence", parsed.get("sequence"))
+            last = completion[-1] if completion else None
+            if isinstance(last, Mapping):
+                content = last.get("content")
+                if isinstance(content, str):
+                    parsed = parser.parse(content)
+                    if parsed:
+                        if "sequence" in parsed:
+                            state.setdefault("sequence", parsed.get("sequence"))
             return func(prompt, completion, answer, state, info)
 
         return wrapped
