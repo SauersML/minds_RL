@@ -1,1 +1,1 @@
-tinker://9bb8cabe-0ab6-5300-81b7-e74def1ac377:train:0/weights/final_step
+tinker://d6d3d792-c982-5555-9418-083dc41974e9:train:0/weights/step_000003
