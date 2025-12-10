@@ -124,6 +124,7 @@ def main() -> None:
         Path("configs/train_ghost.toml"),
         Path("configs/train_prophet.toml"),
         Path("configs/train_self_pred.toml"),
+        Path("configs/train_gradient_intuition.toml"),
     ]
     max_steps = int(os.getenv("CURRICULUM_STEPS", "10"))
     time_budget_seconds = float(os.getenv("CURRICULUM_TIME_LIMIT_SECONDS", 21000))

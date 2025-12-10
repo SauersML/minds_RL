@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gradient-intuition-env"
+version = "0.0.0"
+description = "Gradient intuition wrapper environment"
+dependencies = [
+  "verifiers",
+  "custom-utils",
+  "datasets",
+  "numpy",
+]
+
+[tool.hatch.build]
+include = ["gradient_intuition.py", "probes.py", "__init__.py"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gradient_intuition"]
