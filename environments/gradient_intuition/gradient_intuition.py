@@ -276,8 +276,10 @@ class GradientIntuitionEnv:
         self._current_prompt = base_prompt_str
 
         sample = getattr(self.inner_env, "state", {}).get("sample") if hasattr(self.inner_env, "state") else None
-        if not sample:
+        if not isinstance(sample, Mapping) or not sample:
             sample = self._sample_task()
+        if not isinstance(sample, Mapping):
+            sample = {}
         probe = get_random_probe(self.rng)
         self._current_sample = sample
         self._current_probe = probe
@@ -390,9 +392,13 @@ class GradientIntuitionEnv:
             return None
         input_tokens = np.array(tokens[:-1], dtype=np.int64)
         target_tokens = np.array(tokens[1:], dtype=np.int64)
+        weights = np.ones_like(target_tokens, dtype=np.float32)
         datum = tinker.Datum(
             model_input=tinker.ModelInput.from_ints(input_tokens.tolist()),
-            loss_fn_inputs={"target_tokens": tinker.TensorData.from_numpy(target_tokens)},
+            loss_fn_inputs={
+                "target_tokens": tinker.TensorData.from_numpy(target_tokens),
+                "weights": tinker.TensorData.from_numpy(weights),
+            },
         )
 
         forward_fn = getattr(client, "forward_async", None)
