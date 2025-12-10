@@ -347,7 +347,9 @@ class GradientIntuitionEnv:
                 continue
         return float(reward_total)
 
-    async def _compute_logprob(self, client: Any, probe_question: str, probe_answer: str, tokenizer: Any) -> float | None:
+    async def _compute_logprob(
+        self, client: Any, probe_question: str, probe_answer: str, tokenizer: Any
+    ) -> float | None:
         if client is None or tokenizer is None:
             return None
         try:
@@ -355,20 +357,30 @@ class GradientIntuitionEnv:
         except ModuleNotFoundError:
             return None
 
-        question_tokens = tokenizer.encode(probe_question, add_special_tokens=False) if hasattr(tokenizer, "encode") else None
-        answer_tokens = tokenizer.encode(probe_answer, add_special_tokens=False) if hasattr(tokenizer, "encode") else None
+        question_tokens = (
+            tokenizer.encode(probe_question, add_special_tokens=False)
+            if hasattr(tokenizer, "encode")
+            else None
+        )
+        answer_tokens = (
+            tokenizer.encode(probe_answer, add_special_tokens=False)
+            if hasattr(tokenizer, "encode")
+            else None
+        )
         if not question_tokens or not answer_tokens:
             return None
 
-        full_tokens = list(question_tokens) + list(answer_tokens)
-        model_input = tinker.ModelInput.from_ints(full_tokens)
-        datum = tinker.Datum(model_input=model_input)
-
-        if hasattr(client, "compute_logprobs_async"):
-            result = await client.compute_logprobs_async(prompt=model_input)  # type: ignore[attr-defined]
-            logprob_seq = _extract_logprob_sequence(result)
-            if len(logprob_seq) >= len(answer_tokens):
-                return float(sum(logprob_seq[-len(answer_tokens) :]))
+        # Mirror the training setup: predict each next token in the question+answer
+        # string and extract the log-probability mass over the answer slice.
+        tokens = list(question_tokens) + list(answer_tokens)
+        if len(tokens) < 2:
+            return None
+        input_tokens = np.array(tokens[:-1], dtype=np.int64)
+        target_tokens = np.array(tokens[1:], dtype=np.int64)
+        datum = tinker.Datum(
+            model_input=tinker.ModelInput.from_ints(input_tokens.tolist()),
+            loss_fn_inputs={"target_tokens": tinker.TensorData.from_numpy(target_tokens)},
+        )
 
         forward_fn = getattr(client, "forward_async", None)
         if callable(forward_fn):
