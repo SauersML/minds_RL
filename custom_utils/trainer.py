@@ -702,7 +702,7 @@ class Trainer:
                                 build_kwargs["training_client"] = training_client
                             if "base_model" in param_names:
                                 build_kwargs["base_model"] = self.config.base_model
-                        except (TypeError, ValueError):
+                        except Exception:
                             build_kwargs = {}
                         try:
                             envs = list(self.env.build(sampling_client, **build_kwargs))

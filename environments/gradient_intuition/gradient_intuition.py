@@ -25,7 +25,7 @@ class GradientIntuitionParser(vf.Parser):
         import re
 
         self._prediction_pattern = re.compile(
-            r"prediction\s*[:\-]\s*([-+]?\d*\.\d+(?:[eE][-+]?\d+)?|[-+]?\d+)",
+            r"prediction\W*[:\-]\W*([-+]?\d*\.\d+(?:[eE][-+]?\d+)?|[-+]?\d+)",
             re.IGNORECASE,
         )
         self._answer_pattern = re.compile(r"answer\s*[:\-]\s*(.+)", re.IGNORECASE | re.DOTALL)
@@ -339,17 +339,14 @@ class GradientIntuitionEnv:
         probe_answer = probe.get("answer", "")
         pre_lp = await self._compute_logprob(shadow_client, probe_question, probe_answer)
         if pre_lp is None:
-            self._discard_shadow_client()
             return None
 
         prompt_text = str(sample.get("prompt") or sample.get("question") or "")
         updated = await self._shadow_update(prompt_text, task_answer, tokenizer)
         if not updated:
-            self._discard_shadow_client()
             return None
 
         post_lp = await self._compute_logprob(shadow_client, probe_question, probe_answer)
-        self._discard_shadow_client()
         if post_lp is None:
             return None
         return float(post_lp - pre_lp)
