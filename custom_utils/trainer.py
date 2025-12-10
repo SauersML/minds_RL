@@ -239,6 +239,28 @@ class Trainer:
         except Exception:
             pass
 
+    def _write_metrics_entry(
+        self,
+        metrics_path: Path,
+        metrics_history: list[dict[str, Any]],
+        entry: Mapping[str, Any] | None,
+    ) -> None:
+        """Persist a single metrics entry if it is a mapping.
+
+        The integration harness expects every line of ``metrics.jsonl`` to be a
+        dictionary. Defensive validation avoids writing ``null`` or other
+        non-dictionary payloads that would later crash the parser.
+        """
+
+        if not isinstance(entry, Mapping):
+            # Skip malformed entries instead of emitting "null" lines
+            return
+
+        normalized = dict(entry)
+        metrics_history.append(normalized)
+        with metrics_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(normalized) + "\n")
+
     def _write_job_summary(self, metrics_history: Sequence[Mapping[str, Any]], output_path: Path) -> None:
         summary_path = os.getenv("GITHUB_STEP_SUMMARY")
         if not summary_path:
@@ -940,9 +962,7 @@ class Trainer:
                         "stage": task_label,
                         "sampler_step": last_sampler_update,
                     }
-                    metrics_history.append(step_metrics)
-                    with metrics_path.open("a", encoding="utf-8") as fh:
-                        fh.write(json.dumps(step_metrics) + "\n")
+                    self._write_metrics_entry(metrics_path, metrics_history, step_metrics)
                     self._log_external_metrics(step_metrics)
 
                     if prompt is not None and completion_texts:
@@ -994,9 +1014,7 @@ class Trainer:
                 "step": completed_steps,
                 "stage": stage_name or "",
             }
-            metrics_history.append(metrics)
-            with metrics_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(metrics) + "\n")
+            self._write_metrics_entry(metrics_path, metrics_history, metrics)
 
             if state_path is None:
                 state_path = await _save_checkpoint("final_step")
