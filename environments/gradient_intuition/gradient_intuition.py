@@ -299,6 +299,8 @@ class GradientIntuitionEnv:
         info: Mapping[str, Any] | None,
     ) -> float:
         del prompt
+        if not isinstance(info, Mapping):
+            info = {}
         parsed = None
         if completion:
             content = completion[-1].get("content")
@@ -333,7 +335,7 @@ class GradientIntuitionEnv:
         prompt_msgs = [{"role": "user", "content": self._current_prompt or str(sample.get("prompt") or sample.get("question") or "")}]
         completion_msgs = [{"role": "assistant", "content": str(task_answer)}]
         info_map: dict[str, Any] = {"sample": sample}
-        if info:
+        if isinstance(info, Mapping):
             info_map.update(info)
 
         reward_total = 0.0
