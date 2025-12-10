@@ -207,6 +207,38 @@ def _build_rubric(parser: GhostTraceParser) -> vf.Rubric:
 class GhostTraceEnv(vf.SingleTurnEnv):
     def __init__(self, dataset: Sequence[Mapping[str, Any]], parser: GhostTraceParser, rubric: vf.Rubric, **kwargs: Any) -> None:
         super().__init__(dataset=dataset, parser=parser, rubric=rubric, **kwargs)
+        self.state: dict[str, Any] = {}
+        seed = getattr(self, "seed", None)
+        self._rng = random.Random(seed)
+
+    def initial_observation(self) -> str:
+        dataset = getattr(self, "dataset", None)
+        sample: Mapping[str, Any] | None = None
+
+        if dataset is not None:
+            try:
+                dataset_length = len(dataset)  # type: ignore[arg-type]
+            except Exception:
+                dataset_length = 0
+
+            if dataset_length > 0:
+                try:
+                    sample_idx = self._rng.randrange(dataset_length)
+                except Exception:
+                    sample_idx = 0
+
+                try:
+                    sample = dataset[int(sample_idx)]
+                except Exception:
+                    sample = None
+
+        if not isinstance(sample, Mapping):
+            sample = {}
+
+        self.state = {"sample": sample}
+
+        prompt = sample.get("prompt") or sample.get("question") or ""
+        return str(prompt)
 
     @staticmethod
     def _find_subsequence(sequence: list[int], subsequence: list[int]) -> int:
