@@ -396,15 +396,19 @@ class GradientIntuitionEnv:
         )
 
         forward_fn = getattr(client, "forward_async", None)
+        forward_kwargs = {"loss_fn": "cross_entropy"}
         if callable(forward_fn):
-            result = await forward_fn([datum])
+            result = await forward_fn([datum], **forward_kwargs)
         else:
             forward_sync = getattr(client, "forward", None)
             if not callable(forward_sync):
                 return None
-            result = forward_sync([datum])
+            result = forward_sync([datum], **forward_kwargs)
             if inspect.isawaitable(result):
                 result = await result
+
+        if hasattr(result, "result_async") and callable(result.result_async):
+            result = await result.result_async()
 
         logprob_seq = _extract_logprob_sequence(result)
         if len(logprob_seq) >= len(answer_tokens):
