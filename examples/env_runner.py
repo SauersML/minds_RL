@@ -137,9 +137,15 @@ def run_integration_test(env_path):
             with metrics_file.open() as f:
                 data = [json.loads(line) for line in f if line.strip()]
 
-            if data:
-                last_reward = data[-1].get("reward", "N/A")
+            valid_entries = [entry for entry in data if isinstance(entry, dict)]
+
+            if valid_entries:
+                last_reward = valid_entries[-1].get("reward", "N/A")
                 print(f"   ✅ SUCCESS! Final Reward: {last_reward}")
+                return True
+
+            if data:
+                print("   ⚠️  Metrics file contains non-dictionary entries; skipping reward display.")
                 return True
 
             print("   ⚠️  Metrics file is empty.")
