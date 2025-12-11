@@ -49,6 +49,7 @@ class TrainerConfig:
     resume_checkpoint_id: str | None = None
     save_every_n_steps: int = 50
     update_sampler_every_n_steps: int = 10
+    renderer_name: str | None = None
 
 
 class SamplingClientAdapter:
@@ -356,6 +357,7 @@ class Trainer:
             resume_checkpoint_id=resume_checkpoint_id,
             save_every_n_steps=int(trainer_args.get("save_every_n_steps", 50)),
             update_sampler_every_n_steps=int(trainer_args.get("update_sampler_every_n_steps", 10)),
+            renderer_name=model_cfg.get("renderer_name"),
         )
         return cls(config, env)
 
@@ -426,11 +428,12 @@ class Trainer:
         if self.renderer is not None:
             return
         self._ensure_tokenizer()
-        if get_recommended_renderer_name is not None and tinker_get_renderer is not None:
+        renderer_name = self.config.renderer_name
+        if renderer_name is None and get_recommended_renderer_name is not None:
             renderer_name = get_recommended_renderer_name(self.config.base_model)
-            self.renderer = tinker_get_renderer(renderer_name, self.tokenizer)
-        else:
+        if renderer_name is None or tinker_get_renderer is None:
             raise RuntimeError("Tinker Renderer not found")
+        self.renderer = tinker_get_renderer(renderer_name, self.tokenizer)
 
     def _flatten_model_input_tokens(self, model_input: Any) -> list[int]:
         tokens: list[int] = []
