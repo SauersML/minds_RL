@@ -184,18 +184,8 @@ class _ShadowClientManager:
         return self.client
 
     async def reset_client(self) -> Any | None:
-        client = await self.get_client()
-        if client is None:
-            return None
-
-        for candidate in ("reset_parameters", "reset_adapter", "reset", "load_base_weights", "reload_base_weights"):
-            func = getattr(client, candidate, None)
-            if callable(func):
-                result = func()
-                if inspect.isawaitable(result):
-                    await result
-                return client
-
+        # Always discard the previous client to avoid coupling concurrent
+        # rollouts to a shared adapter.
         self.client = None
         return await self.get_client()
 
@@ -428,6 +418,8 @@ class GradientIntuitionEnv:
 
     async def _ensure_shadow_client(self, *, reset: bool = False) -> Any:
         if reset:
+            # Resetting should discard the previous adapter so that concurrent
+            # rewards never share a mutated shadow model instance.
             self._shadow_client = await self._shadow_manager.reset_client()
             return self._shadow_client
         if self._shadow_client is not None:
@@ -556,13 +548,15 @@ class GradientIntuitionBuilder:
         probes = self.probes if self.probes is not None else [get_random_probe(rng)]
         if not probes:
             probes = [get_random_probe()]
-        shadow_manager = _ShadowClientManager(
-            service_client=service_client,
-            base_model=base_model,
-            shadow_rank=self.shadow_rank,
-        )
         built_envs: list[GradientIntuitionEnv] = []
         for env in envs:
+            # Each environment instance receives its own shadow manager so
+            # parallel rollouts never share a mutable LoRA adapter.
+            shadow_manager = _ShadowClientManager(
+                service_client=service_client,
+                base_model=base_model,
+                shadow_rank=self.shadow_rank,
+            )
             built_envs.append(
                 GradientIntuitionEnv(
                     env,

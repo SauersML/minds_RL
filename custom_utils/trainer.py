@@ -758,17 +758,27 @@ class Trainer:
 
                     completion_texts: list[str] = []
                     completion_data: list[dict[str, Any]] = []
-                    for _ in range(self.config.rollouts_per_example):
-                        if TinkerTokenCompleter is None:
-                            raise ModuleNotFoundError(
-                                "tinker_cookbook.completers.TinkerTokenCompleter is required for training"
-                            )
+
+                    if TinkerTokenCompleter is None:
+                        raise ModuleNotFoundError(
+                            "tinker_cookbook.completers.TinkerTokenCompleter is required for training"
+                        )
+
+                    async def _run_completion() -> Any:
                         completer = TinkerTokenCompleter(
                             sampling_client=sampling_client,
                             max_tokens=self.config.max_new_tokens,
                         )
-                        tokens_with_logprobs = await completer(model_input, stop_sequences)
+                        return await completer(model_input, stop_sequences)
 
+                    completion_results = await asyncio.gather(
+                        *[
+                            asyncio.create_task(_run_completion())
+                            for _ in range(self.config.rollouts_per_example)
+                        ]
+                    )
+
+                    for tokens_with_logprobs in completion_results:
                         completion_tokens = tokens_with_logprobs.tokens
                         logprobs = tokens_with_logprobs.logprobs
 
@@ -937,8 +947,7 @@ class Trainer:
                             return first
 
                         async def _background_step(fw, op):
-                            await _ensure_result(fw)
-                            await _ensure_result(op)
+                            await asyncio.gather(_ensure_result(fw), _ensure_result(op))
 
                         training_task = asyncio.create_task(
                             _background_step(
