@@ -15,16 +15,10 @@ from typing import Any, Mapping, MutableMapping, Sequence
 
 import numpy as np
 
-try:
-    from tinker_cookbook.renderers import get_renderer as tinker_get_renderer
-    from tinker_cookbook.tokenizer_utils import get_tokenizer as tinker_get_tokenizer
-    from tinker_cookbook.model_info import get_recommended_renderer_name
-    from tinker_cookbook.completers import TinkerTokenCompleter
-except ImportError:
-    tinker_get_renderer = None
-    tinker_get_tokenizer = None
-    get_recommended_renderer_name = None
-    TinkerTokenCompleter = None
+from tinker_cookbook.completers import TinkerTokenCompleter
+from tinker_cookbook.model_info import get_recommended_renderer_name
+from tinker_cookbook.renderers import get_renderer as tinker_get_renderer
+from tinker_cookbook.tokenizer_utils import get_tokenizer as tinker_get_tokenizer
 
 try:  # Python 3.11+
     import tomllib

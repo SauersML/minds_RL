@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, MutableMapping, Sequence
 
 import numpy as np
+import tinker
 import verifiers as vf
 
 State = MutableMapping[str, Any]
@@ -218,7 +219,7 @@ async def _entropy_reward(
         return 0.0
     client = info.get("tinker_client")
     if client is None:
-        return 0.0
+        raise ValueError("Missing required tinker_client for entropy reward computation")
 
     sample = state.get("sample") if isinstance(state, Mapping) else None
     if not isinstance(sample, Mapping):
@@ -247,11 +248,6 @@ async def _entropy_reward(
     training_client = info.get("training_client") if isinstance(info, Mapping) else None
 
     if tokenizer is None or training_client is None:
-        return 0.0
-
-    try:
-        import tinker
-    except ModuleNotFoundError:
         return 0.0
 
     prefix_text = f"{prompt_text.rstrip()}\nNUMBER: "
