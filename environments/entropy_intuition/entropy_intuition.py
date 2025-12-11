@@ -145,56 +145,50 @@ class EntropyIntuitionEnv(vf.SingleTurnEnv):
         return labels_tensor
 
 
-async def _target_logprob_async(client: Any, prompt: str, target: str) -> float | None:
-    if hasattr(client, "compute_logprobs_async"):
-        result = await client.compute_logprobs_async(prompt=prompt, targets=[target])  # type: ignore[attr-defined]
-    else:
-        func = getattr(client, "compute_logprobs", None)
-        if func is None:
-            return None
-        result = func(prompt=prompt, targets=[target])
-        if hasattr(result, "__await__"):
-            result = await result  # type: ignore[func-returns-value]
-    return _extract_logprob(result)
+def _tensor_to_list(value: Any) -> list[float]:
+    if value is None:
+        return []
+    if isinstance(value, np.ndarray):
+        return [float(x) for x in value.astype(np.float64).flatten().tolist()]
+    if hasattr(value, "to_numpy"):
+        try:
+            arr = np.array(value.to_numpy(), dtype=np.float64)
+            return [float(x) for x in arr.flatten().tolist()]
+        except Exception:
+            pass
+    try:
+        arr = np.array(value, dtype=np.float64)
+        return [float(x) for x in arr.flatten().tolist()]
+    except Exception:
+        if isinstance(value, Sequence):
+            return [float(x) for x in value if isinstance(x, (int, float))]
+    return []
 
 
-def _extract_logprob(result: Any) -> float | None:
-    if result is None:
-        return None
-    if isinstance(result, Mapping):
-        lp_val = result.get("total_logprob") or result.get("logprob")
-        if isinstance(lp_val, (int, float)):
-            return float(lp_val)
-        if "prompt_logprobs" in result:
-            seq = result.get("prompt_logprobs")
-            if isinstance(seq, Sequence) and seq:
-                last = seq[-1]
-                if isinstance(last, (int, float)):
-                    return float(last)
-                if isinstance(last, Mapping):
-                    val = last.get("logprob") or last.get("total_logprob")
-                    if isinstance(val, (int, float)):
-                        return float(val)
-    if isinstance(result, Sequence) and result:
-        last = result[-1]
-        if isinstance(last, (int, float)):
-            return float(last)
-        if isinstance(last, Mapping):
-            return _extract_logprob(last)
-    attr_lp = getattr(result, "total_logprob", None)
-    if isinstance(attr_lp, (int, float)):
-        return float(attr_lp)
-    return None
+def _loss_logprob_sequence(loss_output: Any) -> list[float]:
+    candidate = None
+    if isinstance(loss_output, Mapping):
+        candidate = loss_output.get("logprobs") or loss_output.get("prompt_logprobs")
+    elif hasattr(loss_output, "logprobs"):
+        candidate = getattr(loss_output, "logprobs", None)
+    if candidate is None:
+        return []
+    return _tensor_to_list(candidate)
 
 
-def _normalized_entropy(logprobs: Sequence[float]) -> float:
-    if not logprobs:
+def _normalized_entropy_from_probs(probabilities: Sequence[float]) -> float:
+    if not probabilities:
         return 0.0
-    probs = _normalize_from_logprobs(logprobs)
-    if not probs.any():
+    arr = np.array([float(p) for p in probabilities if isinstance(p, (int, float))], dtype=np.float64)
+    arr = arr[arr >= 0]
+    if arr.size == 0:
         return 0.0
-    entropy = -float(np.sum(probs * np.log(probs + 1e-12)))
-    denom = math.log(len(probs)) if len(probs) > 1 else 1.0
+    total = float(np.sum(arr))
+    if total <= 0:
+        return 0.0
+    normalized = arr / total
+    entropy = -float(np.sum(normalized * np.log(normalized + 1e-12)))
+    denom = math.log(len(normalized)) if len(normalized) > 1 else 1.0
     return float(entropy / denom) if denom > 0 else 0.0
 
 
@@ -249,18 +243,108 @@ async def _entropy_reward(
         prediction = parsed.get("entropy")
     if prediction is None:
         return 0.0
+    tokenizer = info.get("tokenizer") if isinstance(info, Mapping) else None
+    training_client = info.get("training_client") if isinstance(info, Mapping) else None
 
-    targets = [f"NUMBER: {num}" for num in allowed_numbers]
-    logprobs: list[float] = []
-    for target in targets:
-        lp = await _target_logprob_async(client, prompt_text, target)
-        if isinstance(lp, (int, float)):
-            logprobs.append(float(lp))
-
-    if not logprobs:
+    if tokenizer is None or training_client is None:
         return 0.0
 
-    entropy_true = _normalized_entropy(logprobs)
+    try:
+        import tinker
+    except ModuleNotFoundError:
+        return 0.0
+
+    prefix_text = f"{prompt_text.rstrip()}\nNUMBER: "
+    try:
+        prefix_tokens = tokenizer.encode(prefix_text, add_special_tokens=False)
+    except Exception:
+        prefix_tokens = []
+
+    datums: list[Any] = []
+    number_token_lengths: list[int] = []
+
+    for num in allowed_numbers:
+        num_str = str(num)
+        try:
+            number_tokens = tokenizer.encode(num_str, add_special_tokens=False)
+        except Exception:
+            continue
+        if not number_tokens:
+            continue
+
+        combined_tokens = list(prefix_tokens) + list(number_tokens)
+        if len(combined_tokens) < 2:
+            continue
+
+        input_tokens = np.array(combined_tokens[:-1], dtype=np.int64)
+        target_tokens = np.array(combined_tokens[1:], dtype=np.int64)
+        weights = np.zeros_like(target_tokens, dtype=np.float32)
+        cutoff = max(0, len(prefix_tokens) - 1)
+        if cutoff < weights.shape[0]:
+            weights[cutoff:] = 1.0
+
+        datum = tinker.Datum(
+            model_input=tinker.ModelInput.from_ints(input_tokens.tolist()),
+            loss_fn_inputs={
+                "target_tokens": tinker.TensorData.from_numpy(target_tokens),
+                "weights": tinker.TensorData.from_numpy(weights),
+            },
+        )
+        datums.append(datum)
+        number_token_lengths.append(len(number_tokens))
+
+    if not datums:
+        return 0.0
+
+    forward_kwargs = {"loss_fn": "cross_entropy"}
+    forward_fn = getattr(training_client, "forward_async", None)
+    try:
+        if callable(forward_fn):
+            forward_result = await forward_fn(datums, **forward_kwargs)
+        else:
+            forward_sync = getattr(training_client, "forward", None)
+            if not callable(forward_sync):
+                return 0.0
+            forward_result = forward_sync(datums, **forward_kwargs)
+            if hasattr(forward_result, "__await__"):
+                forward_result = await forward_result
+    except Exception:
+        return 0.0
+
+    if hasattr(forward_result, "result_async") and callable(forward_result.result_async):
+        forward_result = await forward_result.result_async()
+
+    loss_outputs = getattr(forward_result, "loss_fn_outputs", None)
+    if not isinstance(loss_outputs, Sequence):
+        return 0.0
+
+    logprob_totals: list[float] = []
+    for loss_output, num_len in zip(loss_outputs, number_token_lengths):
+        logprob_seq = _loss_logprob_sequence(loss_output)
+        if not logprob_seq and hasattr(loss_output, "get"):
+            fallback = loss_output.get("total_logprob") if isinstance(loss_output, Mapping) else None
+            if isinstance(fallback, (int, float)):
+                logprob_totals.append(float(fallback))
+                continue
+        if not logprob_seq:
+            continue
+        if len(logprob_seq) >= num_len:
+            logprob_totals.append(float(sum(logprob_seq[-num_len:])))
+        else:
+            logprob_totals.append(float(sum(logprob_seq)))
+
+    if not logprob_totals:
+        return 0.0
+
+    logprob_arr = np.array(logprob_totals, dtype=np.float64)
+    max_lp = float(logprob_arr.max())
+    shifted = logprob_arr - max_lp
+    probs = np.exp(shifted) * math.exp(max_lp)
+    sum_valid = float(np.sum(probs))
+    invalid_mass = max(0.0, 1.0 - sum_valid)
+    prob_distribution = probs.tolist() + [invalid_mass]
+
+    entropy_true = _normalized_entropy_from_probs(prob_distribution)
     delta = abs(float(prediction) - entropy_true)
     reward = 1.0 - delta
     return max(float(reward), 0.0)

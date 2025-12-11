@@ -814,6 +814,7 @@ class Trainer:
                                 "prompt": prompt,
                                 "sample": sample,
                                 "tinker_client": sampling_client,
+                                "training_client": training_client,
                                 "tokenizer": self.tokenizer,
                             }
                             answer_value = ""
