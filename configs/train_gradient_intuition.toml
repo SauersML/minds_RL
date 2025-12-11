@@ -12,7 +12,7 @@ rollouts_per_example = 4
 loss_fn = "importance_sampling"
 
   [trainer.args]
-  max_new_tokens = 2048
+  max_new_tokens = 8192
 
 [model]
 base_model = "Qwen/Qwen3-30B-A3B"

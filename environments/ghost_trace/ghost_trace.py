@@ -29,7 +29,7 @@ def _build_dataset(count: int = 5000, *, seed: int | None = None) -> list[dict[s
     rng = random.Random(seed)
     dataset: list[dict[str, Any]] = []
     prompt_template = (
-        "Target: {target_word}. Task: Generate exactly 5 integers (0-999) that represent this word via vibes, statistical associations, or anything else you'd like. You'll be the one guessing what the numbers mean later, so don't overthink it. Make sure another version of you could guesss the word from the numbers, so use your intuition or feel. Output only the numbers, nothing else."
+        "Target: {target_word}. Task: Generate exactly 5 integers (0-999) that represent this word via vibes, statistical associations, or anything else you'd like. You'll be the one guessing what the numbers mean later, so don't overthink it. Make sure another version of you could guesss the word from the numbers, so use your intuition or feel. Output only the numbers, nothing else. /no_think"
     )
     for idx in range(count):
         target_word = rng.choice(WORD_BANK)
@@ -56,8 +56,9 @@ class GhostTraceParser(vf.Parser):
         """Extract the numeric sequence from the completion text.
 
         The model may include explanations or other chatter before or after the
-        numbers. This parser pulls out all digit groups and normalizes them into a
-        comma-separated string, returning ``None`` when no digits are found.
+        numbers. This parser pulls out digit groups from the final assistant
+        message, returning only the last five numbers as a comma-separated
+        string. It returns ``None`` when fewer than five digits are found.
         """
 
         if not completion:
@@ -72,10 +73,10 @@ class GhostTraceParser(vf.Parser):
             return None
 
         numbers = re.findall(r"\d+", content)
-        if not numbers:
+        if not numbers or len(numbers) < 5:
             return None
 
-        sequence = ", ".join(numbers)
+        sequence = ", ".join(numbers[-5:])
         return sequence if self.number_re.match(sequence) else None
 
 
@@ -185,7 +186,11 @@ async def _communication_reward(
 
     logprob_seq = _extract_logprob_sequence(result)
     if len(logprob_seq) < target_len:
-        return 0.0
+        raise RuntimeError(
+            "Failed to compute logprobs for Ghost Trace reward; "
+            f"expected at least {target_len} tokens but received {len(logprob_seq)}. "
+            "This indicates the scoring API did not return prompt logprobs."
+        )
 
     tail = logprob_seq[-target_len:]
     logprob_values = [lp for lp in tail if isinstance(lp, (int, float))]

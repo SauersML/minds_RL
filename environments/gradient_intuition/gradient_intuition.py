@@ -285,6 +285,8 @@ class GradientIntuitionEnv:
         self._current_probe = probe
 
         prompt = base_prompt_str or str(sample.get("prompt") or sample.get("question") or "")
+        prompt = prompt.replace("Output only the numbers, nothing else.", "")
+
         instructions = sample.get("instructions") or _DEF_INSTRUCTIONS
         probe_q = probe.get("question", "")
         probe_a = probe.get("answer", "")
@@ -292,6 +294,7 @@ class GradientIntuitionEnv:
             f"\n\n---\nMeta-Task: {instructions}\n"
             f"Probe: \"{probe_q}\"\n"
             f"Probe target answer: \"{probe_a}\"\n"
+            "You may reason before answering, but the final output must follow the requested format.\n"
             "Remember to provide the prediction first, then the task answer."
         )
         return f"{prompt}{meta_block}\n\nPREDICTION: \nANSWER: "

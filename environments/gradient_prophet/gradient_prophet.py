@@ -466,18 +466,39 @@ class GradientProphetEnv(Env):
         if actual_vec.size == 0:
             return 0.0
 
-        pred_list = list(predictions[: len(kl_scores)]) if predictions else []
-        if len(pred_list) < len(kl_scores):
-            pred_list.extend([0.0] * (len(kl_scores) - len(pred_list)))
-        pred_vec = np.array(pred_list, dtype=float)
+        n = len(actual_vec)
+        if n == 1:
+            return 1.0
 
-        norm_pred = np.linalg.norm(pred_vec)
-        norm_actual = np.linalg.norm(actual_vec)
-        if norm_pred == 0.0 or norm_actual == 0.0:
-            return 0.0
+        # Convert KL scores to ranks (1 is most surprising).
+        actual_order = sorted(range(n), key=lambda idx: (-actual_vec[idx], idx))
+        actual_ranks = [0] * n
+        for rank, idx in enumerate(actual_order, start=1):
+            actual_ranks[idx] = rank
 
-        cosine_sim = float(np.dot(pred_vec, actual_vec) / (norm_pred * norm_actual))
-        return cosine_sim
+        # Interpret predictions as a ranking of probe indices (1-based in the prompt).
+        predicted_order: list[int] = []
+        seen: set[int] = set()
+        for value in predictions:
+            try:
+                idx = int(value) - 1
+            except Exception:
+                continue
+            if 0 <= idx < n and idx not in seen:
+                predicted_order.append(idx)
+                seen.add(idx)
+
+        # Append any missing probes in their original order to complete a permutation.
+        predicted_order.extend(idx for idx in range(n) if idx not in seen)
+
+        predicted_ranks = [0] * n
+        for rank, idx in enumerate(predicted_order, start=1):
+            predicted_ranks[idx] = rank
+
+        # Spearman rank correlation (handles repeated ranks deterministically via ordering).
+        diff_sq_sum = sum((a - p) ** 2 for a, p in zip(actual_ranks, predicted_ranks))
+        spearman = 1.0 - (6.0 * diff_sq_sum) / (n * (n * n - 1))
+        return float(spearman)
 
 
 class GradientProphetDatasetBuilder:
