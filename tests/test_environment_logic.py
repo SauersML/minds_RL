@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from environments.self_prediction import self_prediction as sp
+from self_prediction import self_prediction as sp
 
 
 @pytest.mark.parametrize(
