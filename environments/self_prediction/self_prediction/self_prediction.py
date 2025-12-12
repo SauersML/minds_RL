@@ -183,6 +183,7 @@ def _generate_arithmetic_items(
             {
                 "question": question,
                 "answer": str(answer),
+                "prompt": [{"role": "user", "content": question}],
                 "metadata": {
                     "difficulty": difficulty,
                     "source": "synthetic-arithmetic",
@@ -208,7 +209,7 @@ def _build_dataset(records: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
         dataset.append(
             {
                 "example_id": idx,
-                "prompt": item["question"],
+                "prompt": item.get("prompt", item["question"]),
                 "question": item["question"],
                 "answer": item["answer"],
                 "metadata": metadata,
