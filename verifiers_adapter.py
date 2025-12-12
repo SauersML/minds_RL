@@ -1,18 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, cast
+import asyncio
+from typing import Any, List, cast
 
+import tinker
+import verifiers as vf
 from verifiers.utils.async_utils import maybe_semaphore
 
 from tinker_cookbook import model_info, renderers
-from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
-from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAIClient
-from tinker_cookbook.recipes.verifiers_rl.verifiers_env import (
-    VerifiersEnvGroupBuilder,
-    convert_states_to_trajectory_group,
+from tinker_cookbook.completers import (
+    TinkerTokenCompleter,
+    TokenCompleter,
+    TokensWithLogprobs,
 )
+from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAIClient
+from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder
 from tinker_cookbook.rl import train
-from tinker_cookbook.rl.types import EnvGroupBuilder, TrajectoryGroup
+from tinker_cookbook.rl.types import EnvGroupBuilder, Trajectory, TrajectoryGroup, Transition
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
 
@@ -29,17 +33,20 @@ def make_custom_do_group_rollout(
     closure, so we vendor the logic here to make it importable by `continuous_runner`.
     """
 
-    shared_client: TinkerAsyncOpenAIClient | None = None
     shared_renderer: renderers.Renderer | None = None
     local_tokenizer: Tokenizer | None = None
-
-    max_tokens = getattr(cfg, "max_tokens", 128)
-    temperature = getattr(cfg, "temperature", 1.0)
 
     async def custom_do_group_rollout(
         builder: EnvGroupBuilder, policy: TokenCompleter
     ) -> TrajectoryGroup:
-        nonlocal shared_client, shared_renderer, local_tokenizer
+        nonlocal shared_renderer, local_tokenizer
+
+        gen_limit = (
+            None if max_concurrent_generation is None or max_concurrent_generation < 0 else max_concurrent_generation
+        )
+        score_limit = (
+            None if max_concurrent_scoring is None or max_concurrent_scoring < 0 else max_concurrent_scoring
+        )
 
         if local_tokenizer is None:
             local_tokenizer = get_tokenizer(cfg.model_name)
@@ -48,32 +55,85 @@ def make_custom_do_group_rollout(
             shared_renderer = renderers.get_renderer(renderer_name, local_tokenizer)
 
         sampling_client = cast(TinkerTokenCompleter, policy).sampling_client
-        if shared_client is None:
-            shared_client = TinkerAsyncOpenAIClient(
+        vf_builder = cast(VerifiersEnvGroupBuilder, builder)
+
+        async def run_one_rollout() -> tuple[Trajectory, float, dict[str, float | int]]:
+            recorded: List[
+                tuple[list[renderers.Message], tinker.ModelInput, list[int], list[float]]
+            ] = []
+
+            def hook(messages, model_input, tokens, logprobs):
+                recorded.append((list(messages), model_input, list(tokens), list(logprobs)))
+
+            assert shared_renderer is not None and local_tokenizer is not None
+            local_client = TinkerAsyncOpenAIClient(
                 sampling_client, shared_renderer, local_tokenizer
             )
-        else:
-            shared_client.set_sampling_client(sampling_client)
+            local_client.set_generation_hook(hook)
 
-        vf_builder = cast(VerifiersEnvGroupBuilder, builder)
-        rollout_inputs = vf_builder.get_rollout_inputs(group_size)
+            rollout_input: vf.RolloutInput = {
+                "prompt": vf_builder.prompt,
+                "answer": vf_builder.answer,
+                "task": vf_builder.task,
+                "info": vf_builder.info,
+                "example_id": 0,
+            }
 
-        gen_sem = await maybe_semaphore(max_concurrent_generation)
-        score_sem = await maybe_semaphore(max_concurrent_scoring)
+            gen_sem = await maybe_semaphore(gen_limit)
+            if gen_sem:
+                async with gen_sem:
+                    state = await vf_builder.vf_env.rollout(
+                        input=rollout_input,
+                        client=local_client,
+                        model="tinker",
+                        sampling_args={},
+                    )
+            else:
+                state = await vf_builder.vf_env.rollout(
+                    input=rollout_input,
+                    client=local_client,
+                    model="tinker",
+                    sampling_args={},
+                )
 
-        states = await vf_builder.vf_env.run_group(
-            group_inputs=rollout_inputs,
-            client=shared_client,
-            model="tinker",
-            gen_sampling_args={
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            },
-            gen_sem=gen_sem,
-            score_sem=score_sem,
-        )
+            score_sem = await maybe_semaphore(score_limit)
+            await vf_builder.vf_env.rubric.score_rollout(
+                state=state,
+                score_sem=score_sem,
+            )
+            rs: vf.RolloutScore = {
+                "reward": state["reward"],
+                "metrics": state.get("metrics", {}),
+            }
 
-        return convert_states_to_trajectory_group(states)
+            transitions: List[Transition] = []
+            for _msgs, model_input, tokens, logprobs in recorded:
+                transitions.append(
+                    Transition(
+                        ob=model_input,
+                        ac=TokensWithLogprobs(tokens=tokens, maybe_logprobs=logprobs),
+                        reward=0.0,
+                        episode_done=False,
+                        metrics={},
+                    )
+                )
+            if transitions:
+                transitions[-1] = Transition(
+                    ob=transitions[-1].ob,
+                    ac=transitions[-1].ac,
+                    reward=0.0,
+                    episode_done=True,
+                    metrics=transitions[-1].metrics,
+                )
+
+            traj = Trajectory(transitions=transitions, final_ob=tinker.ModelInput.empty())
+            return traj, float(rs["reward"]), dict(rs["metrics"])
+
+        results = await asyncio.gather(*[run_one_rollout() for _ in range(group_size)])
+        trajectories_G = [t for (t, _r, _m) in results]
+        final_rewards_G = [r for (_t, r, _m) in results]
+        metrics_G = [m for (_t, _r, m) in results]
+        return TrajectoryGroup(trajectories_G, final_rewards_G, metrics_G)
 
     return custom_do_group_rollout
 
