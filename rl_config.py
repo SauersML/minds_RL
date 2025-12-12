@@ -11,7 +11,7 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import chz
 from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersRLDatasetBuilder
@@ -20,6 +20,7 @@ from tinker_cookbook.rl.train import AsyncConfig, Config, StreamMinibatchConfig
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 from environments.rl_datasets import (
+    CompositeRLDatasetBuilder,
     GradientIntuitionRLDatasetBuilder,
     GradientProphetRLDatasetBuilder,
 )
@@ -47,6 +48,13 @@ def _batch_size(trainer_cfg: Mapping[str, Any]) -> int:
         return max(1, int(trainer_cfg.get("groups_per_batch", trainer_cfg.get("batch_size", 4))))
     except Exception:
         return 4
+
+
+def _total_batches(trainer_cfg: Mapping[str, Any]) -> int:
+    try:
+        return max(1, int(trainer_cfg.get("total_batches", trainer_cfg.get("num_batches", 100000))))
+    except Exception:
+        return 100000
 
 
 def _max_tokens(trainer_cfg: Mapping[str, Any]) -> int:
@@ -133,6 +141,44 @@ def _build_dataset_builder(
     )
 
 
+def _build_composite_dataset_builder(
+    envs_cfg: Sequence[Mapping[str, Any]],
+    model_name: str,
+    *,
+    batch_size: int,
+    group_size: int,
+    renderer: Any,
+    base_url: str | None,
+    total_batches: int,
+    seed: int | None,
+) -> CompositeRLDatasetBuilder:
+    components: list[tuple[str, Any, float]] = []
+    try:
+        seed_value = None if seed is None else int(seed)
+    except Exception:
+        seed_value = None
+    for idx, env_cfg in enumerate(envs_cfg):
+        env_id = str(env_cfg.get("id", f"task_{idx}"))
+        task_name = str(env_cfg.get("name", env_id)).strip() or env_id
+        weight = float(env_cfg.get("weight", env_cfg.get("ratio", 1.0)))
+        builder = _build_dataset_builder(
+            env_cfg,
+            model_name,
+            batch_size=batch_size,
+            group_size=group_size,
+            renderer=renderer,
+            base_url=base_url,
+        )
+        components.append((task_name, builder, weight))
+
+    return CompositeRLDatasetBuilder(
+        components=components,
+        groups_per_batch=batch_size,
+        total_batches=total_batches,
+        seed=seed_value,
+    )
+
+
 @dataclass
 class RunnerConfig:
     """Helper class to build the full training Config from inputs."""
@@ -150,6 +196,7 @@ class RunnerConfig:
         _ensure_api_key(raw)
 
         env_cfg = raw.get("env", {})
+        env_list_cfg = raw.get("envs", []) or []
         trainer_cfg = raw.get("trainer", {})
         model_cfg = raw.get("model", {})
         base_model = str(model_cfg.get("base_model", "")).strip()
@@ -163,20 +210,36 @@ class RunnerConfig:
         renderer_name = str(model_cfg.get("renderer_name", model_cfg.get("renderer", "role_colon")))
         renderer = get_renderer(renderer_name, tokenizer)
 
-        dataset_builder = _build_dataset_builder(
-            env_cfg,
-            base_model,
-            batch_size=batch_size,
-            group_size=group_size,
-            renderer=renderer,
-            base_url=self.base_url,
-        )
+        total_batches = _total_batches(trainer_cfg)
+        if env_list_cfg:
+            dataset_builder = _build_composite_dataset_builder(
+                env_list_cfg,
+                base_model,
+                batch_size=batch_size,
+                group_size=group_size,
+                renderer=renderer,
+                base_url=self.base_url,
+                total_batches=total_batches,
+                seed=trainer_cfg.get("seed"),
+            )
+        else:
+            dataset_builder = _build_dataset_builder(
+                env_cfg,
+                base_model,
+                batch_size=batch_size,
+                group_size=group_size,
+                renderer=renderer,
+                base_url=self.base_url,
+            )
 
         log_path = self.log_root / Path(self.config_path).stem
         log_path.mkdir(parents=True, exist_ok=True)
 
-        async_config = AsyncConfig(max_steps_off_policy=self.async_off_policy_steps, groups_per_batch=batch_size)
-        stream_cfg = StreamMinibatchConfig(groups_per_batch=batch_size, num_minibatches=self.stream_minibatches)
+        async_steps = int(trainer_cfg.get("async_off_policy_steps", self.async_off_policy_steps))
+        stream_minibatches = int(trainer_cfg.get("stream_minibatches", self.stream_minibatches))
+
+        async_config = AsyncConfig(max_steps_off_policy=async_steps, groups_per_batch=batch_size)
+        stream_cfg = StreamMinibatchConfig(groups_per_batch=batch_size, num_minibatches=stream_minibatches)
 
         return Config(
             learning_rate=float(trainer_cfg.get("learning_rate", 3.162e-6)),

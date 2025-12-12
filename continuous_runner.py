@@ -1,27 +1,15 @@
-"""Continuous RL Training Runner.
-
-This script implements a continuous training loop that selects configuration
-files from a curriculum and executes them using the Tinker RL harness. It handles
-checkpoint management (resuming from the last state), logging setup (WandB),
-and time budgeting.
-
-Key Features:
-- **Curriculum**: Randomly selects environments from a predefined list.
-- **Checkpointing**: Automatically loads the latest checkpoint from previous runs.
-- **Time Budget**: Respects a global time limit (useful for scheduled jobs).
-- **WandB**: Integrates with Weights & Biases for experiment tracking.
-"""
-
 from __future__ import annotations
 
 import asyncio
-import os
-import random
-import time
-from pathlib import Path
 import json
+import os
+import time
+from datetime import datetime
+from pathlib import Path
 
-from tinker_cookbook.rl import train
+import torch
+from tinker_cookbook import checkpoint_utils
+from tinker_cookbook.rl import data_processing, train
 from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersRLDatasetBuilder
 
 from rl_config import RunnerConfig
@@ -45,15 +33,190 @@ async def _run_config(cfg: train.Config) -> None:
             cfg,
             group_size=group_size,
         )
+    )
 
-        train.do_group_rollout = rollout_fn
-        try:
-            await train.main(cfg)
-        finally:
-            train.do_group_rollout = original_do_group_rollout
+
+def _install_deadline_guard(stop_time: float | None) -> None:
+    if stop_time is None:
         return
 
-    await train.main(cfg)
+    async def _timed_stream_training(
+        start_batch,
+        end_batch,
+        num_batches,
+        cfg,
+        training_client,
+        service_client,
+        evaluators,
+        dataset,
+        ml_logger,
+        tokenizer,
+    ):
+        sampling_client, _ = await train.save_checkpoint_and_get_sampling_client(
+            training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
+        )
+
+        for i_batch in range(start_batch, end_batch):
+            if _deadline_reached(stop_time):
+                await _save_checkpoint_on_deadline(training_client, cfg.log_path, i_batch)
+                break
+
+            metrics = {
+                "progress/batch": i_batch,
+                "optim/lr": cfg.learning_rate,
+                "progress/done_frac": (i_batch + 1) / num_batches,
+            }
+            t_start = time.time()
+
+            if (cfg.eval_every > 0 and i_batch % cfg.eval_every == 0) or i_batch == end_batch - 1:
+                with train.timed("run_evals", metrics):
+                    eval_metrics = await train.run_evaluations_parallel(
+                        evaluators, sampling_client, cfg, i_batch
+                    )
+                    metrics.update(eval_metrics)
+
+            with train._get_logtree_scope(
+                cfg.log_path,
+                cfg.num_groups_to_log,
+                f"train_iteration_{i_batch:06d}",
+                f"RL Iteration {i_batch}",
+            ):
+                trajectory_groups_queue = asyncio.Queue()
+                env_group_builders_P = dataset.get_batch(i_batch)
+
+                @train.scope
+                async def trajectory_group_worker_task(builder, enable_logging: bool) -> None:
+                    local_metrics = {}
+                    local_start = time.time()
+                    trajectory_group = await train.do_group_rollout_and_filter_constant_reward(
+                        sampling_client,
+                        builder,
+                        max_tokens=cfg.max_tokens,
+                        temperature=cfg.temperature,
+                        do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
+                        enable_logging=enable_logging,
+                    )
+                    local_metrics["time/trajectory_group_worker_loop/total"] = time.time() - local_start
+                    if trajectory_group is not None:
+                        trajectory_groups_queue.put_nowait(
+                            train.WrappedTrajectoryGroup(
+                                trajectory_group=trajectory_group,
+                                env_group_builder=builder,
+                                sampling_client_step=i_batch,
+                                metrics=local_metrics,
+                            )
+                        )
+                    else:
+                        trajectory_groups_queue.put_nowait(None)
+
+                for i, builder in enumerate(env_group_builders_P):
+                    asyncio.create_task(
+                        trajectory_group_worker_task(builder, enable_logging=i < cfg.num_groups_to_log),
+                        name=f"trajectory_group_worker_task_{i}",
+                    )
+
+                sampling_client, full_batch_metrics = await train.do_train_step_streaming_and_get_sampling_client(
+                    cfg,
+                    i_batch,
+                    trajectory_groups_queue,
+                    training_client,
+                    service_client,
+                    tokenizer,
+                )
+
+            metrics.update(full_batch_metrics)
+            metrics["time/total"] = time.time() - t_start
+            ml_logger.log_metrics(metrics, step=i_batch)
+
+            if _deadline_reached(stop_time):
+                await _save_checkpoint_on_deadline(training_client, cfg.log_path, i_batch + 1)
+                break
+
+    async def _timed_sync_training(
+        start_batch,
+        end_batch,
+        num_batches,
+        cfg,
+        training_client,
+        service_client,
+        evaluators,
+        dataset,
+        ml_logger,
+        tokenizer,
+    ):
+        sampling_client, _ = await train.save_checkpoint_and_get_sampling_client(
+            training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
+        )
+
+        for i_batch in range(start_batch, end_batch):
+            if _deadline_reached(stop_time):
+                await _save_checkpoint_on_deadline(training_client, cfg.log_path, i_batch)
+                break
+
+            metrics = {
+                "progress/batch": i_batch,
+                "optim/lr": cfg.learning_rate,
+                "progress/done_frac": (i_batch + 1) / num_batches,
+            }
+            t_start = time.time()
+
+            if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
+                with train.timed("run_evals", metrics):
+                    eval_metrics = await train.run_evaluations_parallel(
+                        evaluators, sampling_client, cfg, i_batch
+                    )
+                    metrics.update(eval_metrics)
+
+            env_group_builders_P = dataset.get_batch(i_batch)
+
+            with train._get_logtree_scope(
+                log_path=cfg.log_path,
+                num_groups_to_log=cfg.num_groups_to_log,
+                f_name=f"train_iteration_{i_batch:06d}",
+                scope_name=f"RL Iteration {i_batch}",
+            ):
+                trajectory_groups_P = await asyncio.gather(
+                    *[
+                        asyncio.create_task(
+                            train.do_group_rollout_and_filter_constant_reward(
+                                sampling_client,
+                                builder,
+                                max_tokens=cfg.max_tokens,
+                                temperature=cfg.temperature,
+                                do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
+                                enable_logging=i < cfg.num_groups_to_log,
+                            ),
+                            name=f"sample_task_{i}",
+                        )
+                        for i, builder in enumerate(env_group_builders_P)
+                    ]
+                )
+            trajectory_groups_P = [
+                trajectory_group
+                for trajectory_group in trajectory_groups_P
+                if trajectory_group is not None
+            ]
+
+            sampling_client, train_step_metrics = await train.do_train_step_and_get_sampling_client(
+                cfg,
+                i_batch,
+                training_client,
+                service_client,
+                tokenizer,
+                env_group_builders_P,
+                trajectory_groups_P,
+            )
+
+            metrics.update(train_step_metrics)
+            metrics["time/total"] = time.time() - t_start
+            ml_logger.log_metrics(metrics, step=i_batch)
+
+            if _deadline_reached(stop_time):
+                await _save_checkpoint_on_deadline(training_client, cfg.log_path, i_batch + 1)
+                break
+
+    train.do_sync_training_with_stream_minibatch = _timed_stream_training
+    train.do_sync_training = _timed_sync_training
 
 
 def _load_last_state_checkpoint(log_dir: Path) -> str | None:
@@ -102,43 +265,41 @@ def main() -> None:
     except Exception:
         pass
 
-    curriculum = [
-        Path("configs/train_ghost.toml"),
-        Path("configs/train_prophet.toml"),
-        Path("configs/train_self_pred.toml"),
-        Path("configs/train_gradient_intuition.toml"),
-    ]
+    master_config = Path(os.getenv("MASTER_CONFIG_PATH", "configs/multi_task.toml"))
     time_budget_seconds = float(os.getenv("CURRICULUM_TIME_LIMIT_SECONDS", 21000))
     deadline = time.time() + time_budget_seconds
 
     base_url = os.getenv("TINKER_BASE_URL")
     wandb_project = os.getenv("WANDB_PROJECT")
-    log_root = Path("outputs")
+
+    run_id = os.getenv("RUN_ID") or datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    log_root = Path("outputs") / run_id
     log_root.mkdir(parents=True, exist_ok=True)
 
-    latest_checkpoint: str | None = None
+    initial_checkpoint = _load_last_state_checkpoint(log_root / master_config.stem)
 
-    while time.time() < deadline:
-        config_path = random.choice(curriculum)
-        cfg_log_dir = log_root / config_path.stem
-        cfg_log_dir.mkdir(parents=True, exist_ok=True)
+    cfg = RunnerConfig(
+        config_path=master_config,
+        log_root=log_root,
+        base_url=base_url,
+        wandb_project=wandb_project,
+        initial_checkpoint=initial_checkpoint,
+    ).build()
 
-        cfg = RunnerConfig(
-            config_path=config_path,
-            log_root=log_root,
-            base_url=base_url,
-            wandb_project=wandb_project,
-            initial_checkpoint=latest_checkpoint,
-        ).build()
+    _install_advantage_normalization()
+    _install_deadline_guard(deadline)
 
-        # Respect the time budget by breaking early if the next run would exceed it.
-        if time.time() >= deadline:
-            break
-        asyncio.run(_run_config(cfg))
+    rollout_fn = train.do_group_rollout
+    if isinstance(cfg.dataset_builder, VerifiersRLDatasetBuilder):
+        group_size = getattr(cfg.dataset_builder, "group_size", 1)
+        rollout_fn = make_custom_do_group_rollout(
+            cfg,
+            group_size=group_size,
+        )
 
-        updated_checkpoint = _load_last_state_checkpoint(Path(cfg.log_path)) if hasattr(cfg, "log_path") else None
-        if updated_checkpoint:
-            latest_checkpoint = updated_checkpoint
+    train.do_group_rollout = _wrap_rollout_with_tags(rollout_fn)
+
+    asyncio.run(train.main(cfg))
 
 
 if __name__ == "__main__":
