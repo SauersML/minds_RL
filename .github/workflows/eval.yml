@@ -51,15 +51,30 @@ jobs:
             RUN_ID=$(python -c "import json; print(json.load(open('run_state.json'))['run_id'])")
             echo "Found Run ID: $RUN_ID"
 
-            CKPT_FILE="outputs/$RUN_ID/checkpoints.jsonl"
-            if [ ! -f "$CKPT_FILE" ]; then
-               echo "::error::Checkpoints file not found at $CKPT_FILE"
+            # Find the file anywhere inside the run folder (handles the 'multi_task' subfolder)
+            CKPT_FILE=$(find "outputs/$RUN_ID" -name "checkpoints.jsonl" | head -n 1)
+
+            if [ -z "$CKPT_FILE" ]; then
+               echo "::error::Checkpoints file not found in outputs/$RUN_ID/"
                exit 1
             fi
 
-            # Extract last sampler_path using python one-liner to avoid indentation issues
-            # Flattened to single line to prevent YAML/Shell indentation conflict
-            SAMPLER_PATH=$(python -c "import json, sys; lines=[json.loads(l) for l in open('$CKPT_FILE') if l.strip()]; path=next((x['sampler_path'] for x in reversed(lines) if 'sampler_path' in x), None); print(path) if path else sys.exit(1)")
+            echo "Reading from: $CKPT_FILE"
+
+            # Robust parsing: read line by line, ignore corrupt JSON
+            SAMPLER_PATH=$(python -c "import json, sys; path=None
+            try:
+              lines=open(sys.argv[1]).readlines()
+            except: sys.exit(1)
+            for l in reversed(lines):
+              try:
+                d=json.loads(l)
+                if 'sampler_path' in d:
+                  path=d['sampler_path']
+                  break
+              except: continue
+            if path: print(path)
+            else: sys.exit(1)" "$CKPT_FILE")
 
             if [ -z "$SAMPLER_PATH" ]; then
                echo "::error::Could not find sampler_path in $CKPT_FILE"

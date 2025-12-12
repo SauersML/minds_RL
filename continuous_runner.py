@@ -301,7 +301,7 @@ def _install_deadline_guard(stop_time: float | None) -> None:
 
                 # PERIODIC CHECKPOINT
                 if i_batch > 0 and i_batch % cfg.save_every == 0:
-                    path_dict = await checkpoint_utils.save_checkpoint_async(
+                    await checkpoint_utils.save_checkpoint_async(
                         training_client=training_client,
                         name=f"{i_batch:06d}",
                         log_path=cfg.log_path,

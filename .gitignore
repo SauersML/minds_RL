@@ -20,5 +20,8 @@ __pycache__/
 wandb/
 
 # Training state - Explicitly allow these
+# Ignore all output artifacts by default (logs, html, weights)
+outputs/*
+!outputs/**/checkpoints.jsonl
+!outputs/**/config.json
 !run_state.json
-!outputs/
