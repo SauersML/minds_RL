@@ -9,6 +9,10 @@ on:
         default: '5.8'
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -77,23 +81,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Stage the files
-          git add run_state.json outputs/
+          git config --global user.name "Tinker Bot"
+          git config --global user.email "bot@tinker.ai"
+          git pull --rebase origin main || true
+
+          # Force add specific state files
+          git add -f run_state.json
+          git add -f outputs/*/checkpoints.jsonl
+          git add -f outputs/*/config.json
           
-          # 2. Check if we actually have work to save
-          if git diff --cached --quiet; then
-            echo "No checkpoint changes to commit"
-          else
-            # 3. Commit.
-            git commit -m "📈 Training progress [skip ci]"
-            
-            # 4. Since we committed, Git can safely replay our commit 
-            #    on top of any new changes from the server.
-            git pull --rebase origin main
-            
-            # 5. Push the result
-            git push
-          fi
+          git commit -m "🤖 Update Training State [skip ci]" || echo "No changes"
+          git push
 
       - name: Upload training artifacts
         if: always()
