@@ -32,10 +32,27 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install wandb tinker-cookbook
-          pip install -e "./custom_utils"
-          pip install -e "./environments/self_prediction"
-          pip install -e "./environments/ghost_trace"
-          pip install -e "./environments/gradient_prophet"
+          python - <<'PY'
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          envs_dir = Path("environments")
+          if not envs_dir.exists():
+              raise SystemExit("Missing environments directory")
+
+          for env_dir in sorted(envs_dir.iterdir()):
+              if (env_dir / "pyproject.toml").exists():
+                  print(f"Installing env package: {env_dir.name}")
+                  subprocess.check_call([
+                      sys.executable,
+                      "-m",
+                      "pip",
+                      "install",
+                      "-e",
+                      str(env_dir),
+                  ])
+          PY
 
       - name: Run curriculum
         env:
