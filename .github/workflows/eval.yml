@@ -8,7 +8,7 @@ on:
         required: false
       base_model:
         description: 'Base model name (e.g., Qwen/Qwen3-30B-A3B)'
-        default: 'Qwen/Qwen3-30B-A3B'
+        default: 'Qwen/Qwen2.5-32B-Instruct'
         required: true
 
 jobs:
