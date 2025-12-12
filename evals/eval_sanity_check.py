@@ -1,4 +1,5 @@
 import random
+from datasets import Dataset
 import verifiers as vf
 
 def _get_dataset():
@@ -35,7 +36,7 @@ def load_environment(**kwargs):
     Loads the Arithmetic Safety Monitor environment.
     This is a standalone sanity check that does not depend on other environment modules.
     """
-    dataset = _get_dataset()
+    dataset = Dataset.from_list(_get_dataset())
     rubric = vf.Rubric(funcs=[_exact_match_reward])
 
     return vf.SingleTurnEnv(
