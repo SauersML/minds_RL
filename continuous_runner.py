@@ -10,30 +10,17 @@ from pathlib import Path
 import torch
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.rl import data_processing, train
-from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersRLDatasetBuilder
+from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder
 
 from rl_config import RunnerConfig
 from verifiers_adapter import make_custom_do_group_rollout
 
 
-async def _run_config(cfg: train.Config) -> None:
-    """Execute a single training run based on the provided configuration.
-
-    This function patches the ``do_group_rollout`` function in ``tinker_cookbook``
-    if the environment uses the Verifiers adapter. This allows injection of custom
-    logic for rollout execution and scoring.
-
-    Args:
-        cfg: The training configuration object.
-    """
-    if isinstance(cfg.dataset_builder, VerifiersRLDatasetBuilder):
-        original_do_group_rollout = train.do_group_rollout
-        group_size = getattr(cfg.dataset_builder, "group_size", 1)
-        rollout_fn = make_custom_do_group_rollout(
-            cfg,
-            group_size=group_size,
-        )
-    )
+def _install_advantage_normalization() -> None:
+    # Tinker automatically centers advantages within each TrajectoryGroup.
+    # We patch this if needed, but currently rely on Tinker's default behavior
+    # for normalization, while ensuring logging tags are propagated correctly via the wrapper.
+    pass
 
 
 def _install_deadline_guard(stop_time: float | None) -> None:
@@ -219,6 +206,21 @@ def _install_deadline_guard(stop_time: float | None) -> None:
     train.do_sync_training = _timed_sync_training
 
 
+def _deadline_reached(stop_time: float) -> bool:
+    return time.time() >= stop_time
+
+
+async def _save_checkpoint_on_deadline(training_client, log_path, i_batch) -> None:
+    print(f"Deadline reached at batch {i_batch}. Saving checkpoint and exiting...")
+    await training_client.save_checkpoint(
+        log_path,
+        i_batch,
+        force=True,
+        state_key="state_path",
+        step=i_batch,
+    )
+
+
 def _load_last_state_checkpoint(log_dir: Path) -> str | None:
     """Find the most recent training checkpoint in the log directory.
 
@@ -252,6 +254,20 @@ def _load_last_state_checkpoint(log_dir: Path) -> str | None:
         return last_checkpoint
 
     return last_checkpoint
+
+
+def _wrap_rollout_with_tags(rollout_fn):
+    async def wrapper(builder, *args, **kwargs):
+        traj_group = await rollout_fn(builder, *args, **kwargs)
+        if traj_group is not None:
+            try:
+                tags = builder.logging_tags()
+                if tags:
+                    setattr(traj_group, "logging_tags", tags)
+            except AttributeError:
+                pass
+        return traj_group
+    return wrapper
 
 
 def main() -> None:
@@ -289,15 +305,35 @@ def main() -> None:
     _install_advantage_normalization()
     _install_deadline_guard(deadline)
 
-    rollout_fn = train.do_group_rollout
-    if isinstance(cfg.dataset_builder, VerifiersRLDatasetBuilder):
-        group_size = getattr(cfg.dataset_builder, "group_size", 1)
-        rollout_fn = make_custom_do_group_rollout(
-            cfg,
-            group_size=group_size,
-        )
+    # Determine group size (fallback to config default if not available)
+    # The default is 8 in the config. We can access it via cfg.dataset_builder if available or assume consistent group size.
+    # cfg.dataset_builder might be CompositeRLDatasetBuilder.
+    # The verifiers adapter needs a fixed group size for concurrency control.
+    # We use groups_per_batch as a proxy for group_size as they are usually aligned.
+    group_size = getattr(cfg.dataset_builder, "group_size", 8)
+    if hasattr(cfg.dataset_builder, "groups_per_batch"):
+        group_size = cfg.dataset_builder.groups_per_batch
 
-    train.do_group_rollout = _wrap_rollout_with_tags(rollout_fn)
+    verifiers_rollout_fn = make_custom_do_group_rollout(
+        cfg,
+        group_size=group_size,
+    )
+    original_do_group_rollout = train.do_group_rollout
+
+    async def dispatch_rollout(builder, policy):
+        # Unwrap the builder to find the true underlying builder
+        inner_builder = builder
+        while hasattr(inner_builder, "_base"):
+            inner_builder = inner_builder._base
+
+        if isinstance(inner_builder, VerifiersEnvGroupBuilder):
+            # Use the custom Verifiers rollout logic with the UNWRAPPED builder
+            return await verifiers_rollout_fn(inner_builder, policy)
+        else:
+            # Use the standard Tinker rollout logic with the ORIGINAL (possibly wrapped) builder
+            return await original_do_group_rollout(builder, policy)
+
+    train.do_group_rollout = _wrap_rollout_with_tags(dispatch_rollout)
 
     asyncio.run(train.main(cfg))
 
