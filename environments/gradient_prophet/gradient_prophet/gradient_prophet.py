@@ -102,8 +102,6 @@ class ProphetParser:
 async def _target_logprob_async(client: Any, prompt: str, target: str) -> float | None:
     # Tinker API does not support 'targets'. We must approximate or use the tokenizer 
     # attached to the client to construct the full sequence.
-    # Since we can't easily get the tokenizer here without major refactoring, 
-    # and this is a specialized env, we will try to use the sampling_client's internal tokenizer if available
     
     tokenizer = getattr(client, "tokenizer", None)
     if not tokenizer:
@@ -144,10 +142,23 @@ async def _prompt_distributions(client: Any, prompt: str) -> list[dict[str, floa
 
     import tinker  # Tinker requires max_tokens to be inside SamplingParams
 
+    tokenizer = getattr(client, "tokenizer", None)
+    if tokenizer is None:
+        # If we can't find a tokenizer, we can't create ModelInput.
+        # This is a critical failure for this method.
+        return []
+        
+    try:
+        # Use add_special_tokens=False typically for prompts unless it's the very start,
+        # but here we just need *some* valid tokens.
+        prompt_tokens = tokenizer.encode(prompt, add_special_tokens=False)
+        model_input = tinker.ModelInput.from_ints(prompt_tokens)
+    except Exception:
+        return []
     params = tinker.SamplingParams(max_tokens=1, top_logprobs=10)
 
     request = {
-        "prompt": prompt,
+        "prompt": model_input, # Pass ModelInput, not string
         "num_samples": 1,
         "sampling_params": params,
     }
