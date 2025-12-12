@@ -4,40 +4,35 @@ A lightweight client-side harness for reinforcement learning (RL) over large lan
 
 ## Installation
 
-1. **Python**: requires Python 3.10+ (per the local utility package metadata).  
-2. **Install local utilities and environments** (editable installs keep code changes live):
+1. **Python**: requires Python 3.10+.
+2. **Install environments** (editable installs keep code changes live):
    ```bash
-   pip install -e custom_utils
    pip install -e environments/ghost_trace
    pip install -e environments/self_prediction
    pip install -e environments/gradient_prophet
    ```
-3. **Core dependencies**: the utilities and environments depend on `verifiers`, `torch`, `transformers>=4.44`, `datasets`, and `peft`; the utilities expect the `tinker` SDK to be available at runtime.  
+3. **Core dependencies**: the environments depend on `verifiers`, `torch`, `transformers>=4.44`, `datasets`, and `peft`; the utilities expect the `tinker` SDK to be available at runtime.
 4. **Authentication**: export your key before training: `export TINKER_API_KEY=<your_key>` (or set a custom env var referenced by `[tinker.api_key_env]` in configs).
 
 ## Architecture: What It Does
 
 1. **Configuration & setup**
-   * `Trainer.from_config(<path>)` loads a TOML config, imports the `load_environment` function from the configured module, and captures trainer/model/tinker settings (including API key resolution from `TINKER_API_KEY` or a custom env var).  
-   * The trainer lazily imports the `tinker` package, then builds a `ServiceClient` (for sampling) and `TrainingClient` (for optimization) using the chosen base model and loss function.
+   * `RunnerConfig` converts the lightweight TOML configs in `configs/` into a `tinker_cookbook.rl.train.Config`, wiring in the right `RLDatasetBuilder` for each environment type.
+   * The cookbook's `train.main` entry point handles all client creation (service/training/sampling), logging, and checkpoint management.
 
-2. **Training loop (per step)**
-   * Selects an environment: if the loaded object exposes `build(sampling_client)`, the trainer materializes a list of env instances with access to the active sampler; otherwise it reuses the provided dataset/env.  
-   * Obtains a prompt via `initial_observation()` or a dataset entry (`prompt`/`question`).  
-   * Calls `sampling_client.sample(prompt, num_samples, max_tokens)` to generate multiple completions.  
-   * Scores each completion: environments with a `rubric` run the weighted verification functions; otherwise `env.step(text)` is awaited and its `reward` is used.  
-   * Computes a baseline mean reward, converts centered rewards to advantages, and packages each prompt/completion/advantage into `tinker.Datum` objects.  
-   * Pipelines `forward_backward` and `optim_step` calls to the Tinker service to update weights efficiently, then logs step metrics to `outputs/metrics.json` (or the provided `output_dir`).
+2. **Training loop**
+   * The Tinker cookbook drives async, off-policy training with streaming minibatches so sampling continues while optimization runs.
+   * Dataset builders for verifiers-based environments use the built-in `VerifiersRLDatasetBuilder`; Prophet and Gradient Intuition environments use custom builders in `environments/rl_datasets.py` with dedicated service clients for reward-side sampling.
 
 3. **Data flow summary**
-   * Local code manages prompts, sampling, reward computation, and data assembly.  
-   * Remote Tinker servers perform sampling (when using `ServiceClient`) and the paired forward/backward + optimizer clock cycles issued by `TrainingClient`.
+   * Local code provides prompts, reward computation, and dataset definitions.
+   * Remote Tinker servers perform sampling plus overlapped forward/backward and optimizer steps, scheduled on clock cycles.
 
 ## Running Experiments
 
-Run experiments from the repository root:
+Run experiments from the repository root with the continuous runner:
 ```bash
-python run_experiment.py configs/train_ghost.toml
+python continuous_runner.py
 ```
 The provided configs in `configs/` specify:
 * `[env]`: module path for `load_environment` plus optional `[env.args]` forwarded as `**kwargs`.

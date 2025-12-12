@@ -8,7 +8,6 @@ version = "0.0.0"
 description = "Gradient Prophet verification environment"
 dependencies = [
   "verifiers",
-  "custom-utils",
   "torch",
   "transformers>=4.44",
   "peft",

@@ -184,18 +184,8 @@ class _ShadowClientManager:
         return self.client
 
     async def reset_client(self) -> Any | None:
-        client = await self.get_client()
-        if client is None:
-            return None
-
-        for candidate in ("reset_parameters", "reset_adapter", "reset", "load_base_weights", "reload_base_weights"):
-            func = getattr(client, candidate, None)
-            if callable(func):
-                result = func()
-                if inspect.isawaitable(result):
-                    await result
-                return client
-
+        # Always discard the previous client to avoid coupling concurrent
+        # rollouts to a shared adapter.
         self.client = None
         return await self.get_client()
 
@@ -215,6 +205,7 @@ class GradientIntuitionEnv:
         shadow_rank: int = 8,
         shadow_learning_rate: float = 1e-4,
         shadow_manager: _ShadowClientManager | None = None,
+        renderer: Any | None = None,
     ) -> None:
         self.inner_env = inner_env
         self.alpha = alpha
@@ -236,6 +227,7 @@ class GradientIntuitionEnv:
         self._current_sample: Mapping[str, Any] | None = None
         self._current_probe: Probe | None = None
         self._current_prompt: str = ""
+        self.renderer = renderer
 
         async def _reward(
             prompt: Messages,
@@ -267,12 +259,41 @@ class GradientIntuitionEnv:
         except Exception:
             return dataset[0]
 
-    def initial_observation(self) -> str:
-        base_prompt = self.inner_env.initial_observation()
-        try:
-            base_prompt_str = str(base_prompt)
-        except Exception:
-            base_prompt_str = "" if base_prompt is None else str(base_prompt)
+    def _extract_base_prompt(self) -> str:
+        prompt: str | None = None
+        if hasattr(self.inner_env, "initial_observation") and callable(
+            getattr(self.inner_env, "initial_observation")
+        ):
+            try:
+                prompt = self.inner_env.initial_observation()
+            except Exception:
+                prompt = None
+        if not prompt and hasattr(self.inner_env, "state"):
+            state_sample = getattr(self.inner_env, "state", {}).get("sample")  # type: ignore[arg-type]
+            if isinstance(state_sample, Mapping):
+                prompt = str(state_sample.get("prompt") or state_sample.get("question") or "")
+        if not prompt:
+            sample = self._sample_task()
+            if isinstance(sample, Mapping):
+                prompt = str(sample.get("prompt") or sample.get("question") or "")
+        return str(prompt or "")
+
+    def _render_prompt(self, prompt: str) -> tuple[tinker.ModelInput, list[int]]:
+        messages = [{"role": "user", "content": prompt}]
+        rendered = getattr(self.renderer, "build_generation_prompt", None)
+        if callable(rendered):
+            return rendered(messages)  # type: ignore[return-value]
+        stop_seqs = getattr(self.renderer, "get_stop_sequences", lambda *_: [])([])
+        tokenizer = getattr(self.renderer, "tokenizer", None)
+        if tokenizer is not None and hasattr(tokenizer, "encode"):
+            try:
+                return tinker.ModelInput.from_ints(tokenizer.encode(prompt)), list(stop_seqs)
+            except Exception:
+                pass
+        return tinker.ModelInput.from_ints([]), list(stop_seqs)
+
+    def initial_observation(self) -> tuple[tinker.ModelInput, list[int]]:
+        base_prompt_str = self._extract_base_prompt()
         self._current_prompt = base_prompt_str
 
         sample = getattr(self.inner_env, "state", {}).get("sample") if hasattr(self.inner_env, "state") else None
@@ -297,7 +318,8 @@ class GradientIntuitionEnv:
             "You may reason before answering, but the final output must follow the requested format.\n"
             "Remember to provide the prediction first, then the task answer."
         )
-        return f"{prompt}{meta_block}\n\nPREDICTION: \nANSWER: "
+        rendered_prompt = f"{prompt}{meta_block}\n\nPREDICTION: \nANSWER: "
+        return self._render_prompt(rendered_prompt)
 
     async def _evaluate_reward(
         self,
@@ -428,6 +450,8 @@ class GradientIntuitionEnv:
 
     async def _ensure_shadow_client(self, *, reset: bool = False) -> Any:
         if reset:
+            # Resetting should discard the previous adapter so that concurrent
+            # rewards never share a mutated shadow model instance.
             self._shadow_client = await self._shadow_manager.reset_client()
             return self._shadow_client
         if self._shadow_client is not None:
@@ -507,6 +531,7 @@ class GradientIntuitionBuilder:
         seed: int | None = None,
         shadow_rank: int = 8,
         shadow_learning_rate: float = 1e-4,
+        renderer: Any | None = None,
     ) -> None:
         self.inner_env_id = inner_env_id
         self.inner_env_args = dict(inner_env_args or {})
@@ -515,6 +540,7 @@ class GradientIntuitionBuilder:
         self.seed = seed
         self.shadow_rank = shadow_rank
         self.shadow_learning_rate = shadow_learning_rate
+        self.renderer = renderer
 
     def _load_inner_env(self) -> Any:
         env_path = Path(self.inner_env_id).resolve()
@@ -539,7 +565,7 @@ class GradientIntuitionBuilder:
 
     def build(
         self,
-        sampling_client: Any,
+        sampling_client: Any | None,
         *,
         service_client: Any | None = None,
         base_model: str | None = None,
@@ -556,13 +582,15 @@ class GradientIntuitionBuilder:
         probes = self.probes if self.probes is not None else [get_random_probe(rng)]
         if not probes:
             probes = [get_random_probe()]
-        shadow_manager = _ShadowClientManager(
-            service_client=service_client,
-            base_model=base_model,
-            shadow_rank=self.shadow_rank,
-        )
         built_envs: list[GradientIntuitionEnv] = []
         for env in envs:
+            # Each environment instance receives its own shadow manager so
+            # parallel rollouts never share a mutable LoRA adapter.
+            shadow_manager = _ShadowClientManager(
+                service_client=service_client,
+                base_model=base_model,
+                shadow_rank=self.shadow_rank,
+            )
             built_envs.append(
                 GradientIntuitionEnv(
                     env,
@@ -574,6 +602,7 @@ class GradientIntuitionBuilder:
                     shadow_rank=self.shadow_rank,
                     shadow_learning_rate=self.shadow_learning_rate,
                     shadow_manager=shadow_manager,
+                    renderer=self.renderer,
                 )
             )
         return built_envs

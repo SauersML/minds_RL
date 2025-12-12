@@ -1,27 +1,22 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-import pytest
-import json
-
-from custom_utils import Trainer
+from rl_config import RunnerConfig
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize("config_path", [Path("configs/ci_test.toml")])
-def test_full_training_loop_runs(config_path: Path, tmp_path: Path) -> None:
+def test_runner_config_parses_ci_config(tmp_path: Path) -> None:
+    config_path = Path("configs/ci_test.toml")
     assert config_path.exists(), "CI config must exist"
-    trainer = Trainer.from_config(config_path)
-    metrics = trainer.train(max_steps=1, output_dir=tmp_path)
-    metrics_path = tmp_path / "metrics.jsonl"
 
-    assert metrics_path.exists()
-    lines = metrics_path.read_text().strip().splitlines()
-    assert lines, "metrics.jsonl should not be empty"
-    last_metrics = json.loads(lines[-1])
+    # Provide a stub API key so RunnerConfig validation passes without hitting the network.
+    os.environ.setdefault("TINKER_API_KEY", "dummy-key")
 
-    assert "loss" in last_metrics and "reward" in last_metrics
-    assert last_metrics["loss"] >= 0
-    assert last_metrics["loss"] == metrics["loss"]
-    assert last_metrics["reward"] == metrics["reward"]
+    runner_cfg = RunnerConfig(config_path=config_path, log_root=tmp_path)
+    cfg = runner_cfg.build()
+
+    assert cfg.model_name == "meta-llama/Llama-3.2-1B"
+    assert cfg.max_tokens == 512
+    assert cfg.async_config is not None
+    assert cfg.stream_minibatch_config is not None
