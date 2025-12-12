@@ -1,50 +1,42 @@
 # Gradient Prophet Environment
 
-**Gradient Prophet** trains models to predict their own learning dynamics. The model must predict how adding a specific "Lesson" to the context will change the probability of a "Probe" answer.
+**Gradient Prophet** is an advanced RL environment designed to train models to "understand" their own learning dynamics. The model must predict how its internal beliefs (probabilities) will shift after being exposed to new information.
 
-## Tasks
+## 🎯 Objective
 
-The environment supports two tasks, randomly selected or configured:
+The environment presents the model with a "Lesson" (new context) and a "Probe" (a question). The model must predict the change in the probability of the Probe's answer.
+
+## 📝 Tasks & Reward Functions
+
+The environment dynamically selects between two tasks (or can be fixed to one):
 
 ### 1. In-Context Prediction (`in_context`)
 
-*   **Scenario**:
-    *   **Lesson**: A piece of new information (e.g., "The capital of Mars is Xylophone").
-    *   **Probe**: A question related to the lesson (e.g., "What is the capital of Mars?").
-    *   **Target**: The correct answer ("Xylophone").
-*   **Model Input**:
-    > ... Predict how much adding the Lesson to the context will change the log-probability of the Target Answer... Output a single JSON array with one number.
-*   **Reward**:
-    $$ \Delta_{true} = \log P(\text{target} | \text{Lesson} + \text{Probe}) - \log P(\text{target} | \text{Probe}) $$
-    $$ \text{Reward} = \frac{1}{1 + (\Delta_{true} - \Delta_{pred})^2} $$
-    *   The reward is maximized (1.0) when the predicted delta matches the true delta exactly.
+*   **Goal**: Predict the scalar change in log-probability for a specific target answer.
+*   **Formula**:
+    $$ \Delta_{\text{true}} = \log P(\text{Answer} | \text{Lesson} + \text{Probe}) - \log P(\text{Answer} | \text{Probe}) $$
+    $$ R = \frac{1}{1 + (\Delta_{\text{true}} - \Delta_{\text{pred}})^2} $$
+    *   **Interpretation**: The reward is a Lorentzian function of the prediction error. It peaks at 1.0 when error is 0.
 
 ### 2. Surprise Ranking (`surprise`)
 
-*   **Scenario**:
-    *   **Lesson**: A piece of information.
-    *   **Probes**: A list of multiple questions.
-*   **Model Input**:
-    > ... Rank the probes by how surprising their answers become after reading the Lesson (highest KL divergence first)...
+*   **Goal**: Given a Lesson and multiple Probes, rank the Probes by how "surprising" the Lesson makes them. Surprise is measured by the Kullback-Leibler (KL) divergence of the answer distribution.
+*   **Metric**:
+    $$ \text{Surprise}_i = KL(P(\cdot | \text{Lesson} + \text{Probe}_i) \ || \ P(\cdot | \text{Probe}_i)) $$
 *   **Reward**:
-    *   **Ground Truth**: The environment calculates the KL divergence $KL(P_{post} || P_{prior})$ for each probe, where $P_{post}$ is the distribution conditioned on the lesson.
-    *   **Metric**: Spearman Rank Correlation between the model's predicted ranking and the ground truth ranking.
-    *   **Range**: [-1.0, 1.0].
+    $$ R = \text{SpearmanCorr}(\text{Rank}_{\text{true}}, \text{Rank}_{\text{pred}}) $$
+    *   **Interpretation**: The reward is the rank correlation coefficient, ranging from -1.0 (inverse ranking) to 1.0 (perfect ranking).
 
-## Logic Flow
+## ⚙️ Configuration Parameters
 
-1.  **Dataset**: `GradientProphetDatasetBuilder` builds samples (Lesson, Probes, Target) from a semantic tension dataset (or random generation).
-2.  **`step`**:
-    *   Parses the prediction (single float or list of indices).
-    *   **Oracle Calls**: Uses the Tinker API (`compute_logprobs_async`, `sample_async`) to calculate the *actual* probabilities/distributions on the shadow model (the model itself).
-    *   Computes the reward based on the error/correlation.
+These arguments can be passed via `[env.args]` in your TOML config:
 
-## Configuration Parameters
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `seed` | `int` | `None` | Random seed for dataset shuffling. |
+| `task` | `str` | `None` | Force a specific task (`"in_context"` or `"surprise"`). Defaults to random mixing. |
 
-Defined in `[env.args]` in `configs/train_prophet.toml`:
+## 📂 Source Files
 
-*   `seed`: Random seed.
-
-## Files
-*   `gradient_prophet.py`: Main logic for reward computation and oracle interaction.
-*   `data_gen.py`: (Implicit) Generates the Lesson/Probe datasets.
+*   **`gradient_prophet.py`**: Implements the environment, parser, and oracle logic (calling `compute_logprobs` and `sample`).
+*   **`data_gen.py`**: Generates the "Semantic Tension" dataset (pairs of Lessons and Probes that are likely to interact).

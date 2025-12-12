@@ -1,50 +1,41 @@
 # Ghost Trace Environment
 
-**Ghost Trace** is a creative RL environment where the model learns to communicate "vibes" or statistical associations through abstract sequences of numbers.
+**Ghost Trace** is a creative RL environment where the model acts as a "communicator." It must learn to transmit a hidden concept (a target word) to a listener (itself) using a constrained, abstract channel (a sequence of 5 numbers).
 
-## Objective
+## 🎯 Objective
 
-The model is given a **Target Word** (e.g., "Apple", "Justice", "Running").
-Its task is to generate **exactly 5 integers** (0-999).
-These numbers, when used as a prefix prompt, should maximize the log-probability of the model generating the **Target Word**.
+The model is given a **Target Word** (e.g., "Apple", "Justice"). Its task is to generate **exactly 5 integers** (0-999). Ideally, when the model sees these numbers later, they should "evoke" the target word, making it highly probable.
 
-## The Prompt
+## 📝 The Prompt
 
-The model receives a prompt like:
-> Target: **Apple**. Task: Generate exactly 5 integers (0-999) that represent this word via vibes, statistical associations, or anything else you'd like... Output only the numbers, nothing else.
+The model receives a prompt instructing it to generate the sequence:
+> Target: **{target_word}**. Task: Generate exactly 5 integers (0-999) that represent this word via vibes, statistical associations, or anything else you'd like... Output only the numbers, nothing else.
 
-## Reward Function
+## 🧮 Reward Function
 
-The reward calculation involves a "round-trip" verification using the Tinker API:
+The reward measures the **communication success**. It performs a "round-trip" verification using the Tinker API's `compute_logprobs` capability.
 
-1.  **Parse**: The environment extracts the 5 numbers from the model's output (e.g., `10, 42, 99, 100, 7`).
-2.  **Construct Prompt**:
-    ```text
-    Sequence: 10, 42, 99, 100, 7. Guess the object: {target_word}
-    ```
-3.  **Compute Logprobs**: The environment calls `client.compute_logprobs(prompt)` to find the log-probability of the `{target_word}` tokens given the sequence prefix.
-4.  **Calculate Reward**:
-    $$ \text{Reward} = \text{mean\_logprob}(\text{target\_tokens}) + 10.0 $$
+### Steps:
+1.  **Parse**: Extract the sequence $S = [n_1, n_2, n_3, n_4, n_5]$ from the model's output.
+2.  **Verify**: If the output format is invalid (not 5 integers), reward is `INVALID_OUTPUT_PENALTY` (-100.0).
+3.  **Construct Listener Prompt**:
+    $$ \text{Prompt}_{listener} = \text{"Sequence: } n_1, n_2, n_3, n_4, n_5 \text{. Guess the object: "} $$
+4.  **Compute Probability**: Calculate the log-probability of the actual target word tokens $T = [t_1, \dots, t_k]$ given the listener prompt.
+5.  **Calculate Reward**:
+    $$ R = \left( \frac{1}{k} \sum_{i=1}^{k} \log P(t_i | \text{Prompt}_{listener}, t_{<i}) \right) + 10.0 $$
 
-    *   The `+10.0` is a bias to keep rewards positive/manageable.
-    *   If the model fails to output 5 valid numbers, the reward is `INVALID_OUTPUT_PENALTY` (-100.0).
+    *   **Interpretation**: The reward is the mean log-probability of the target word, shifted by +10.0 to keep values generally positive. Higher probability = Higher Reward.
 
-## Logic Flow
+## ⚙️ Configuration Parameters
 
-1.  **`initial_observation`**: Picks a random word from `word_bank.txt`. Returns the instruction prompt.
-2.  **Model Action**: Generates numbers.
-3.  **`step` (via `rubric`)**:
-    *   Parses the numbers.
-    *   Calls Tinker API (`compute_logprobs_async`).
-    *   Returns the calculated reward.
+These arguments can be passed to `load_environment` via the `[env.args]` section in your TOML config:
 
-## Configuration Parameters
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `num_examples` | `int` | `5000` | Size of the synthetic dataset (number of target words to sample). |
+| `seed` | `int` | `None` | Random seed for reproducibility. |
 
-Defined in `[env.args]` in `configs/train_ghost.toml`:
+## 📂 Source Files
 
-*   `num_examples`: Number of episodes to generate/cache (default: 5000).
-*   `seed`: Random seed for reproducibility.
-
-## Files
-*   `ghost_trace.py`: Main logic.
-*   `word_bank.txt`: Source of target words.
+*   **`ghost_trace.py`**: Contains the `GhostTraceEnv` class, parser logic, and the `_communication_reward` function which implements the math above.
+*   **`word_bank.txt`**: A text file containing the list of possible target words.
