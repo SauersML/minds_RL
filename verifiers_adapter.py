@@ -11,6 +11,7 @@ multi-turn interactions and scoring semaphores.
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
 from typing import Any, Callable, Dict, List, Optional, overload, Literal, cast
 
@@ -260,21 +261,9 @@ def make_custom_do_group_rollout(
         # Now we can safely treat it as VerifiersEnvGroupBuilder (duck typed)???
 
         # --- FIX: Instantiate separate environments for each rollout in the group ---
-        # Try to use make_envs to get separate instances, fallback to copy if not available
-        if hasattr(vf_builder, "make_envs"):
-            envs = await vf_builder.make_envs()
-        else:
-            import copy
-            envs = [copy.copy(vf_builder.vf_env) for _ in range(group_size)]
-
-        # Ensure we have enough envs (truncate or cycle if needed, though make_envs should be correct)
-        if len(envs) > group_size:
-            envs = envs[:group_size]
-        elif len(envs) < group_size:
-            # This shouldn't happen if make_envs is correct, but for safety:
-            import copy
-            while len(envs) < group_size:
-                envs.append(copy.copy(envs[0]))
+        # VerifiersEnvGroupBuilder.make_envs() is known to return an empty list in some versions.
+        # We explicitly deep-copy the prototype environment for every rollout task to ensure full state isolation.
+        envs = [copy.deepcopy(vf_builder.vf_env) for _ in range(group_size)]
 
         async def run_one_rollout(env) -> tuple[Trajectory, float, dict[str, float | int]]:
             recorded: List[
