@@ -1,3 +1,3 @@
-from .gradient_prophet import load_environment
+from .gradient_prophet import GradientProphetDatasetBuilder, GradientProphetEnv, load_environment
 
-__all__ = ["load_environment"]
+__all__ = ["GradientProphetDatasetBuilder", "GradientProphetEnv", "load_environment"]
