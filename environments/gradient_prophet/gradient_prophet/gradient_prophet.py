@@ -333,9 +333,9 @@ class GradientProphetEnv(Env):
         prompt = str(self.sample.get("prompt", ""))
         messages = [{"role": "user", "content": prompt}]
         rendered = getattr(self.renderer, "build_generation_prompt", None)
-        if callable(rendered):
-            return rendered(messages)  # type: ignore[return-value]
         stop_seqs = getattr(self.renderer, "get_stop_sequences", lambda *_: [])([])
+        if callable(rendered):
+            return rendered(messages), stop_seqs  # type: ignore[return-value]
         tokenizer = getattr(self.renderer, "tokenizer", None)
         if tokenizer is not None and hasattr(tokenizer, "encode"):
             try:
