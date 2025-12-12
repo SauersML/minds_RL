@@ -11,7 +11,9 @@
 
 ## 🧮 Reward Function
 
-$$ R_{\text{total}} = R_{\text{task}} + \alpha \cdot \max(0, 1.0 - |\Delta_{\text{pred}} - \Delta_{\text{true}}|) $$
+```math
+R_{\text{total}} = R_{\text{task}} + \alpha \cdot \max(0, 1.0 - |\Delta_{\text{pred}} - \Delta_{\text{true}}|)
+```
 
 ### Calculating $\Delta_{\text{true}}$ (The Shadow Client)
 The environment maintains a separate **Shadow Client** (a dedicated LoRA adapter) to measure the true gradient update without affecting the main training loop.
