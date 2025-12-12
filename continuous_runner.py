@@ -10,7 +10,7 @@ from pathlib import Path
 import torch
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.rl import data_processing, train
-from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder
+from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersRLDatasetBuilder, VerifiersEnvGroupBuilder
 
 from rl_config import RunnerConfig
 from verifiers_adapter import make_custom_do_group_rollout
@@ -212,12 +212,12 @@ def _deadline_reached(stop_time: float) -> bool:
 
 async def _save_checkpoint_on_deadline(training_client, log_path, i_batch) -> None:
     print(f"Deadline reached at batch {i_batch}. Saving checkpoint and exiting...")
-    await training_client.save_checkpoint(
-        log_path,
-        i_batch,
-        force=True,
-        state_key="state_path",
-        step=i_batch,
+    await checkpoint_utils.save_checkpoint_async(
+        training_client=training_client,
+        name=f"{i_batch:06d}_deadline",
+        log_path=log_path,
+        loop_state={"batch": i_batch},
+        kind="state",
     )
 
 
@@ -309,10 +309,7 @@ def main() -> None:
     # The default is 8 in the config. We can access it via cfg.dataset_builder if available or assume consistent group size.
     # cfg.dataset_builder might be CompositeRLDatasetBuilder.
     # The verifiers adapter needs a fixed group size for concurrency control.
-    # We use groups_per_batch as a proxy for group_size as they are usually aligned.
     group_size = getattr(cfg.dataset_builder, "group_size", 8)
-    if hasattr(cfg.dataset_builder, "groups_per_batch"):
-        group_size = cfg.dataset_builder.groups_per_batch
 
     verifiers_rollout_fn = make_custom_do_group_rollout(
         cfg,
