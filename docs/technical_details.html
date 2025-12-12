@@ -38,6 +38,13 @@
         margin-bottom: 1rem;
         color: var(--color-text-main);
       }
+      .tech-section h4 {
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 1.25rem;
+        margin-top: 1.5rem;
+        margin-bottom: 0.5rem;
+        color: var(--color-secondary);
+      }
       .tech-section p {
         margin-bottom: 1rem;
         line-height: 1.6;
@@ -50,6 +57,7 @@
         overflow-x: auto;
         font-family: 'Courier New', Courier, monospace;
         margin-bottom: 1.5rem;
+        font-size: 0.9rem;
       }
       .math-block {
         background: rgba(255, 255, 255, 0.05);
@@ -58,6 +66,8 @@
         margin: 1.5rem 0;
         text-align: center;
         font-style: italic;
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 1.1rem;
       }
       .back-link {
         display: inline-block;
@@ -103,92 +113,168 @@
         <p class="hero__lead">Detailed documentation of the custom RL environments and infrastructure built for this project.</p>
 
         <section class="tech-section" id="infrastructure">
-          <h2>Infrastructure & Integration</h2>
+          <h2>Training Architecture</h2>
           <p>
-            Our training harness is built on top of the <strong>Tinker</strong> platform, utilizing `tinker-cookbook` for efficient, async off-policy reinforcement learning.
-            We have extended the core infrastructure to support complex, multi-modal reward functions and integration with external verification libraries.
+            Our training harness relies on an <strong>Async Off-Policy Reinforcement Learning</strong> loop built on top of the <strong>Tinker</strong> platform. This architecture allows us to decouple data generation (rollouts) from model optimization, maximizing GPU utilization.
           </p>
+
+          <h3>The "Streaming Minibatch" Loop</h3>
+          <p>
+            The core logic resides in <code>continuous_runner.py</code>, which orchestrates the interaction between two key client types:
+          </p>
+          <ul class="tech-list">
+            <li><strong>Sampling Client:</strong> A lightweight client responsible for generating text and computing log-probabilities. It pulls weights from the latest checkpoint to ensure data is "fresh" (on-policy or near-on-policy).</li>
+            <li><strong>Training Client:</strong> A heavy client that computes gradients and updates the LoRA parameters. It runs continuously in the background.</li>
+          </ul>
+          <p>
+            This setup uses a "Streaming Minibatch" strategy. Instead of waiting for a full dataset to be collected before training (Synchronous PPO), we feed small batches of trajectories into the optimizer as soon as they are ready. This reduces the "time-to-first-update" and creates a smoother learning curve.
+          </p>
+          <div class="code-block">
+# continuous_runner.py (simplified)
+async def _timed_async_training(...):
+    while i_batch < end_batch:
+        # 1. Asynchronously collect trajectories
+        wrapped_traj = await trajectory_groups_queue.get()
+
+        # 2. Filter stale data (too far off-policy)
+        if not filter_stale(wrapped_traj): continue
+
+        # 3. Stream to the optimizer
+        new_sampler, metrics = await train.do_train_step_streaming(
+            ..., trajectory_groups_queue, training_client
+        )
+
+        # 4. Update the sampler to the new weights
+        state["sampling_client"] = new_sampler
+          </div>
 
           <h3>Verifiers Adapter</h3>
           <p>
-            We implemented a custom `VerifiersAdapter` to bridge the `verifiers` library (used for honesty checks) with the Tinker API.
-            This adapter translates Tinker's `SamplingClient` into an OpenAI-compatible interface, allowing us to run standard evaluation suites directly within our training loop.
-            It also handles the unpacking of complex return types (tuples of state and auxiliary info) from newer Verifiers SDK versions.
+            To integrate the <code>verifiers</code> library (which is designed for standard OpenAI APIs) with Tinker's custom RPC protocol, we implemented a <code>VerifiersAdapter</code>. This component acts as a translation layer.
           </p>
-
-          <h3>Shadow Client Mechanism</h3>
           <p>
-            For environments like <strong>Gradient Intuition</strong>, we developed a "Shadow Client" system.
-            This allows us to spawn a secondary, isolated LoRA adapter during training to perform hypothetical gradient updates.
-            By measuring the "true" effect of a training step on a probe question without affecting the main model's parameters, we can generate high-fidelity ground truth signals for our "intuition" rewards.
+            Crucially, it injects a <strong>Generation Hook</strong> to capture token-level log-probabilities during generation. Standard OpenAI-compatible clients often discard this granular data, but our reward functions (like Ghost Trace) rely on it to compute exact probabilities of target words.
           </p>
+           <div class="code-block">
+# verifiers_adapter.py
+async def custom_do_group_rollout(builder, policy):
+    # Fix: Instantiate deep copies for stateful environments
+    envs = [copy.deepcopy(vf_builder.vf_env) for _ in range(group_size)]
+
+    # Run rollouts in parallel
+    results = await asyncio.gather(*[run_one_rollout(env) for env in envs])
+    return TrajectoryGroup(results...)
+          </div>
         </section>
 
         <section class="tech-section" id="environments">
-          <h2>Custom Environments</h2>
+          <h2>Custom Environments: Deep Dive</h2>
           <p>
-            We have developed five distinct RL environments, each targeting a specific aspect of introspection, calibration, or honesty.
+            We developed five distinct RL environments. Below is a detailed look at the motivation and implementation mechanics for each.
           </p>
 
+          <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 3rem 0;">
+
           <h3>1. Ghost Trace</h3>
+          <h4>Motivation</h4>
           <p>
-            <strong>Objective:</strong> A communication game where the model must transmit a hidden concept (Target Word) to itself using a constrained channel of 5 integers.
+            <strong>"Can the model agree with itself?"</strong><br>
+            Ghost Trace tests <em>grounding</em> and <em>internal consistency</em>. We force the model to communicate a complex concept (e.g., "Justice") to itself using a severely constrained channel (5 abstract integers). If the model can reliably recover the concept from its own code, it implies it has formed a stable internal mapping between abstract symbols and semantic concepts.
           </p>
-          <p><strong>Reward Function:</strong> The reward measures the log-probability of the target word when the model (acting as listener) is prompted with the generated number sequence.</p>
+          <h4>Implementation Mechanics</h4>
+          <p>
+            The reward calculation uses a "round-trip" verification. We take the model's output (the numbers) and feed them back into the model as a prompt: <code>"Sequence: 5, 23, 99. Guess the object:"</code>.
+          </p>
+          <p>
+            Instead of generating text, we verify the probability of the <em>original target word</em>.
+          </p>
           <div class="math-block">
             R = (1/k * Σ log P(token_i | ListenerPrompt)) + 10.0
           </div>
           <p>
-            This environment tests the model's ability to form consistent internal representations and "vibes" that map abstract numbers back to concrete concepts.
+            We use the <code>compute_logprobs</code> method on the Tinker Sampling Client to get the exact likelihood of the target tokens given the "number prompt".
           </p>
 
           <h3>2. Self Prediction</h3>
+          <h4>Motivation</h4>
           <p>
-            <strong>Objective:</strong> Train models to accurately estimate the likelihood that their own answers to arithmetic problems are correct.
+            <strong>"Do you know when you are wrong?"</strong><br>
+            Standard RLHF rewards models for being right. This often leads to "sycophancy" or overconfidence. Self Prediction adds a second objective: <em>Calibration</em>. A model that says "I am 60% confident" and is right 60% of the time is more useful than a model that is always 100% confident but occasionally hallucinates.
           </p>
-          <p><strong>Reward Function:</strong> A composite reward combining formatting, accuracy, and a calibration score based on the Brier Score.</p>
+          <h4>Implementation Mechanics</h4>
+          <p>
+            We use the <strong>Brier Score</strong>, a proper scoring rule that is strictly maximized only when the predicted probability matches the true empirical frequency.
+          </p>
           <div class="math-block">
              R_cal = 1.0 - (Confidence - IsCorrect)^2
           </div>
           <p>
-            The model outputs a confidence score [0.0-1.0]. If correct, reward peaks at Confidence=1.0. If incorrect, reward peaks at Confidence=0.0.
+            The reward function parses the model's output for a specific XML tag <code>&lt;confidence&gt;0.8&lt;/confidence&gt;</code>. If the format is broken, the model receives a penalty, teaching it to adhere to strict structural constraints.
           </p>
 
           <h3>3. Gradient Prophet</h3>
+          <h4>Motivation</h4>
           <p>
-            <strong>Objective:</strong> Predict how internal beliefs (probabilities) will shift after being exposed to new information ("Lesson").
+            <strong>"Theory of Self."</strong><br>
+            Humans have a sense of how learning works ("If I read this book, I will know more about history"). Gradient Prophet attempts to instill this in models. The task asks: <em>"How will your beliefs change if you read this text?"</em>. This is a step towards models that can select their own training data or recognize dangerous information hazards.
           </p>
-          <p><strong>Tasks:</strong></p>
-          <ul class="tech-list">
-            <li><strong>In-Context Prediction:</strong> Predict the scalar change in log-probability for a specific answer.</li>
-            <li><strong>Surprise Ranking:</strong> Rank multiple probe questions by how "surprising" the lesson makes them (measured by KL divergence).</li>
-          </ul>
+          <h4>Implementation Mechanics</h4>
           <p>
-            The reward is based on the accuracy of the scalar prediction (Lorentzian loss) or the rank correlation for surprise ranking.
+            The environment uses a two-step verification:
           </p>
+          <ol class="tech-list">
+            <li><strong>Measure:</strong> Query the model for the probability of an answer <em>before</em> seeing the lesson.</li>
+            <li><strong>Update (In-Context):</strong> Append the lesson to the context and query the probability again.</li>
+            <li><strong>Compare:</strong> The reward is based on how accurately the model predicted the difference ($\Delta$) between Step 1 and Step 2.</li>
+          </ol>
 
           <h3>4. Entropy Intuition</h3>
+          <h4>Motivation</h4>
           <p>
-            <strong>Objective:</strong> Estimate the entropy of the next-token distribution over a constrained range of numbers.
+            <strong>"Metacognition of Uncertainty."</strong><br>
+            While Self Prediction asks for a single confidence number, Entropy Intuition asks the model to predict the <em>shape</em> of its uncertainty. High entropy means "I have many possible answers"; low entropy means "I am sure of one thing".
           </p>
+          <h4>Implementation Mechanics</h4>
           <p>
-            The model must output a number, a "feeling" (explanation), and an entropy estimate. The ground truth entropy is calculated by performing a forward pass and computing the Shannon entropy of the logits.
+            We compute the "True Entropy" by performing a full forward pass over the vocabulary (constrained to the number range) and calculating the Shannon entropy of the softmax distribution.
           </p>
           <div class="math-block">
-            R = max(0, 1.0 - |Entropy_pred - Entropy_true_norm|)
+            H(P) = -Σ p_i * log(p_i)
           </div>
+          <p>
+            The reward is the absolute difference between the model's predicted scalar and this calculated truth.
+          </p>
 
           <h3>5. Gradient Intuition</h3>
+          <h4>Motivation</h4>
           <p>
-            <strong>Objective:</strong> A meta-environment that adds a secondary objective to any inner task: predict the <em>Gradient Update Effect</em>.
+            <strong>"Causal Self-Awareness."</strong><br>
+            This is our most advanced task. It asks the model to predict the effect of a <em>parameter update</em> (Gradient Descent) before it happens. This differs from Gradient Prophet (which is in-context learning). It tests if the model understands the geometry of its own loss landscape.
           </p>
+          <h4>Implementation Mechanics: The Shadow Client</h4>
           <p>
-            The model predicts how much the probability of a random probe question will change if it trains on its own current answer.
-            We use the <strong>Shadow Client</strong> to perform the actual update and measure the true delta.
+            Measuring the effect of a gradient step is destructive—it changes the model. To do this safely during training, we built a <strong>Shadow Client</strong>.
           </p>
-          <div class="math-block">
-            R_total = R_task + α * max(0, 1.0 - |Δ_pred - Δ_true|)
+          <div class="code-block">
+# gradient_intuition.py
+async def _measure_true_gradient_effect(self, prompt, answer, probe):
+    # 1. Reset Shadow Client to match current main model
+    await self.shadow_client.reset_weights()
+
+    # 2. Pre-measurement
+    prob_pre = await self.shadow_client.compute_logprobs(probe)
+
+    # 3. Perform ONE gradient step on the Shadow Client ONLY
+    await self.shadow_client.train_step(prompt, answer)
+
+    # 4. Post-measurement
+    prob_post = await self.shadow_client.compute_logprobs(probe)
+
+    return prob_post - prob_pre
           </div>
+          <p>
+            The reward is proportional to the accuracy of the prediction of this <code>prob_post - prob_pre</code> delta.
+          </p>
         </section>
 
         <footer class="footer">
