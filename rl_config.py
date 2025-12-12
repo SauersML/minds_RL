@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+import chz
 from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersRLDatasetBuilder
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.rl.train import AsyncConfig, Config, StreamMinibatchConfig
@@ -51,6 +52,11 @@ def _loss_fn(trainer_cfg: Mapping[str, Any]) -> str:
     return str(loss)
 
 
+@chz.chz
+class AugmentedVerifiersRLDatasetBuilder(VerifiersRLDatasetBuilder):
+    group_size: int = 1
+
+
 def _build_dataset_builder(
     env_cfg: Mapping[str, Any],
     model_name: str,
@@ -90,18 +96,15 @@ def _build_dataset_builder(
 
     dataset_n = env_args.get("num_examples", -1)
     dataset_seed = env_args.get("seed")
-    builder = VerifiersRLDatasetBuilder(
+    
+    return AugmentedVerifiersRLDatasetBuilder(
         vf_env_id=env_id,
         vf_env_args=env_args,
         groups_per_batch=batch_size,
         dataset_n=dataset_n,
         dataset_seed=dataset_seed,
+        group_size=group_size,
     )
-
-    # Track group_size on the builder so verifiers rollouts can respect
-    # rollouts_per_example during the monkey-patched execution path.
-    builder.group_size = group_size  # type: ignore[attr-defined]
-    return builder
 
 
 @dataclass
@@ -163,4 +166,3 @@ class RunnerConfig:
             base_url=self.base_url,
             wandb_project=self.wandb_project,
         )
-
