@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -11,13 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import tinker
-from tinker import types
-from tinker_cookbook import renderers, model_info
-from tinker_cookbook.tokenizer_utils import get_tokenizer
+import tinker  # noqa: E402
+from tinker import types  # noqa: E402
+from tinker_cookbook import renderers, model_info  # noqa: E402
+from tinker_cookbook.tokenizer_utils import get_tokenizer  # noqa: E402
 
 # Import the environment loader
-from environments.gradient_intuition.gradient_intuition import load_environment
+from environments.gradient_intuition.gradient_intuition import load_environment  # noqa: E402
 
 # Configure logging
 logging.basicConfig(

@@ -11,7 +11,6 @@ from pathlib import Path
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.rl import train
 from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder
-from tinker_cookbook.rl.types import EnvGroupBuilder
 
 from rl_config import RunnerConfig
 from verifiers_adapter import make_custom_do_group_rollout
@@ -306,7 +305,8 @@ def _install_deadline_guard(stop_time: float | None) -> None:
 
                 @train.scope
                 def filter_stale_trajectory_group(wtg):
-                    if wtg is None: return False
+                    if wtg is None:
+                        return False
                     if (i_batch - wtg.sampling_client_step > cfg.async_config.max_steps_off_policy):
                         asyncio.create_task(
                             env_group_builders_queue.put(wtg.env_group_builder),
