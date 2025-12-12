@@ -47,7 +47,6 @@ jobs:
 
           # Install Verifiers and local packages
           pip install --no-build-isolation verifiers
-          pip install -e "./custom_utils"
           python - <<'PY'
           import subprocess
           import sys
