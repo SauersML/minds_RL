@@ -150,13 +150,14 @@ async def _communication_reward(
 
     client = info.get("tinker_client") if isinstance(info, Mapping) else None
     tokenizer = info.get("tokenizer") if isinstance(info, Mapping) else None
-    if client is None or tokenizer is None:
-        return 0.0
+    
+    if client is None:
+        raise ValueError("Ghost Trace Error: 'tinker_client' missing from info dict. Adapter failed to inject runtime client.")
+    if tokenizer is None:
+        raise ValueError("Ghost Trace Error: 'tokenizer' missing from info dict.")
 
-    try:
-        import tinker
-    except ImportError:
-        return 0.0
+    import tinker
+
 
     prefix = f"Sequence: {sequence}. Guess the object:"
     target_fragment = f" {target_word}"
