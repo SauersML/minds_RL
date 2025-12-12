@@ -78,7 +78,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # 1. Stage the files
-          git add data/current_checkpoint.txt data/training_history.jsonl data/samples.tsv
+          git add run_state.json outputs/
           
           # 2. Check if we actually have work to save
           if git diff --cached --quiet; then
@@ -102,5 +102,5 @@ jobs:
           name: continuous-training-logs
           path: |
             outputs/
-            data/
+            run_state.json
           if-no-files-found: ignore
