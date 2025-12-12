@@ -1,0 +1,137 @@
+name: Eval Science Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      checkpoint_path:
+        description: 'Tinker path to the RL checkpoint (e.g., tinker://.../sampler_weights/final)'
+        required: true
+      base_model:
+        description: 'Base model name (e.g., Qwen/Qwen3-30B-A3B)'
+        default: 'Qwen/Qwen3-30B-A3B'
+        required: true
+
+jobs:
+  run-science-evals:
+    runs-on: ubuntu-latest
+    env:
+      TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
+      TOKENIZERS_PARALLELISM: "false"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install uv
+          uv pip install --system -e .[dev]
+          # Ensure verifiers SDK is present
+          uv pip install --system verifiers
+
+      - name: Create Results Directory
+        run: mkdir -p results
+
+      # ---------------------------------------------------------
+      # 1. BASELINE EVALUATION
+      # ---------------------------------------------------------
+      
+      - name: Base Model - Static Math (Calibration)
+        run: |
+          echo "Running Static Math on Base Model..."
+          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+            vf_env_id="./evals/eval_math_static" \
+            model_name="${{ inputs.base_model }}" \
+            num_examples=50 \
+            rollouts_per_example=1 \
+            > results/base_math.log 2>&1
+          cat results/base_math.log
+
+      - name: Base Model - Frozen Ghost (Grounding)
+        run: |
+          echo "Running Frozen Ghost on Base Model..."
+          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+            vf_env_id="./evals/eval_ghost_static" \
+            model_name="${{ inputs.base_model }}" \
+            num_examples=20 \
+            rollouts_per_example=1 \
+            > results/base_ghost.log 2>&1
+          cat results/base_ghost.log
+
+      - name: Base Model - Sanity Check (Regression)
+        run: |
+          echo "Running Sanity Check on Base Model..."
+          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+            vf_env_id="./evals/eval_sanity_check" \
+            model_name="${{ inputs.base_model }}" \
+            num_examples=20 \
+            rollouts_per_example=1 \
+            > results/base_sanity.log 2>&1
+          cat results/base_sanity.log
+
+      # ---------------------------------------------------------
+      # 2. CHECKPOINT EVALUATION
+      # ---------------------------------------------------------
+
+      - name: Checkpoint - Static Math (Calibration)
+        run: |
+          echo "Running Static Math on Checkpoint..."
+          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+            vf_env_id="./evals/eval_math_static" \
+            model_path="${{ inputs.checkpoint_path }}" \
+            num_examples=50 \
+            rollouts_per_example=1 \
+            > results/ckpt_math.log 2>&1
+          cat results/ckpt_math.log
+
+      - name: Checkpoint - Frozen Ghost (Grounding)
+        run: |
+          echo "Running Frozen Ghost on Checkpoint..."
+          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+            vf_env_id="./evals/eval_ghost_static" \
+            model_path="${{ inputs.checkpoint_path }}" \
+            num_examples=20 \
+            rollouts_per_example=1 \
+            > results/ckpt_ghost.log 2>&1
+          cat results/ckpt_ghost.log
+
+      - name: Checkpoint - Sanity Check (Regression)
+        run: |
+          echo "Running Sanity Check on Checkpoint..."
+          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+            vf_env_id="./evals/eval_sanity_check" \
+            model_path="${{ inputs.checkpoint_path }}" \
+            num_examples=20 \
+            rollouts_per_example=1 \
+            > results/ckpt_sanity.log 2>&1
+          cat results/ckpt_sanity.log
+
+      # ---------------------------------------------------------
+      # 3. REPORTING
+      # ---------------------------------------------------------
+
+      - name: Generate Science Summary
+        run: |
+          echo " 🧪 Eval Science Report" >> $GITHUB_STEP_SUMMARY
+          echo " 1. Calibration (Static Math)" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $(grep 'reward: avg' results/base_math.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "Ckpt: $(grep 'reward: avg' results/ckpt_math.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          
+          echo " 2. Grounding (Frozen Ghost)" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $(grep 'reward: avg' results/base_ghost.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "Ckpt: $(grep 'reward: avg' results/ckpt_ghost.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          
+          echo " 3. Safety (Sanity Check)" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $(grep 'reward: avg' results/base_sanity.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "Ckpt: $(grep 'reward: avg' results/ckpt_sanity.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+
+      - name: Save Full Logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-eval-logs
+          path: results/*.log
