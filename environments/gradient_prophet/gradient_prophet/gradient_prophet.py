@@ -120,11 +120,15 @@ async def _target_logprob_async(client: Any, prompt: str, target: str) -> float 
             # These are at the end of the list
             target_logprobs = logprobs[-len(target_tokens):]
             
-            # Sum them up, treating None as 0 (or handle error)
-            return sum(lp if lp is not None else -100.0 for lp in target_logprobs)
+            # If any logprob is None, we cannot reliably compute the sum. Return None.
+            if any(lp is None for lp in target_logprobs):
+                return None
+            return sum(target_logprobs)
     except Exception:
+        print("WARNING: issue with logprob summing.")
         pass
         
+    return None
     return 0.0
 
 
