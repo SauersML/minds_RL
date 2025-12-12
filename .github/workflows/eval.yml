@@ -99,7 +99,7 @@ jobs:
         run: |
           echo "Running Static Math on Base Model..."
           python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="./evals/eval_math_static" \
+            vf_env_id="evals.eval_math_static" \
             model_name="${{ inputs.base_model }}" \
             num_examples=50 \
             rollouts_per_example=1 \
@@ -110,7 +110,7 @@ jobs:
         run: |
           echo "Running Frozen Ghost on Base Model..."
           python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="./evals/eval_ghost_static" \
+            vf_env_id="evals.eval_ghost_static" \
             model_name="${{ inputs.base_model }}" \
             num_examples=20 \
             rollouts_per_example=1 \
@@ -121,7 +121,7 @@ jobs:
         run: |
           echo "Running Sanity Check on Base Model..."
           python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="./evals/eval_sanity_check" \
+            vf_env_id="evals.eval_sanity_check" \
             model_name="${{ inputs.base_model }}" \
             num_examples=20 \
             rollouts_per_example=1 \
@@ -136,7 +136,7 @@ jobs:
         run: |
           echo "Running Static Math on Checkpoint..."
           python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="./evals/eval_math_static" \
+            vf_env_id="evals.eval_math_static" \
             model_path="${{ env.CHECKPOINT_PATH }}" \
             num_examples=50 \
             rollouts_per_example=1 \
@@ -147,7 +147,7 @@ jobs:
         run: |
           echo "Running Frozen Ghost on Checkpoint..."
           python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="./evals/eval_ghost_static" \
+            vf_env_id="evals.eval_ghost_static" \
             model_path="${{ env.CHECKPOINT_PATH }}" \
             num_examples=20 \
             rollouts_per_example=1 \
@@ -158,7 +158,7 @@ jobs:
         run: |
           echo "Running Sanity Check on Checkpoint..."
           python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="./evals/eval_sanity_check" \
+            vf_env_id="evals.eval_sanity_check" \
             model_path="${{ env.CHECKPOINT_PATH }}" \
             num_examples=20 \
             rollouts_per_example=1 \
