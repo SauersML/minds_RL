@@ -72,13 +72,13 @@ jobs:
       - name: Check model and steps
         run: |          
           # Verify the changes
-          grep "TINKER_MODEL =" examples/env_runner.py
-          grep "MAX_STEPS =" examples/env_runner.py
+          grep "TINKER_MODEL =" tests/test_envs.py
+          grep "MAX_STEPS =" tests/test_envs.py
 
       - name: Run Integration Examples (Real)
         # This runs env_runner.py, which creates configs and calls Trainer.train()
         run: |
-          python examples/env_runner.py
+          python tests/test_envs.py
 
       - name: Upload training artifacts
         if: always()
