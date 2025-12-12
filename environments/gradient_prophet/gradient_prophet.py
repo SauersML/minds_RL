@@ -527,10 +527,12 @@ class GradientProphetDatasetBuilder:
         samples: Sequence[Mapping[str, Any]] | None = None,
         *,
         seed: int | None = None,
+        renderer: Any | None = None,
     ) -> None:
         self.rng = random.Random(seed)
         self.samples = list(samples) if samples is not None else build_semantic_tension_dataset()
         self.rng.shuffle(self.samples)
+        self.renderer = renderer
 
     def build(self, sampling_client: Any) -> list[GradientProphetEnv]:
         envs: list[GradientProphetEnv] = []
@@ -538,7 +540,7 @@ class GradientProphetDatasetBuilder:
             sample_with_task = dict(sample)
             if sample_with_task.get("task") not in {"in_context", "surprise"}:
                 sample_with_task["task"] = self.rng.choice(["in_context", "surprise"])
-            envs.append(GradientProphetEnv(sample_with_task, sampling_client))
+            envs.append(GradientProphetEnv(sample_with_task, sampling_client, renderer=self.renderer))
         return envs
 
 
