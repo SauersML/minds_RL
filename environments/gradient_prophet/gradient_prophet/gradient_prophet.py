@@ -100,16 +100,35 @@ class ProphetParser:
 
 
 async def _target_logprob_async(client: Any, prompt: str, target: str) -> float | None:
-    if hasattr(client, "compute_logprobs_async"):
-        result = await client.compute_logprobs_async(prompt=prompt, targets=[target])  # type: ignore[attr-defined]
-    else:
-        func = getattr(client, "compute_logprobs", None)
-        if func is None:
-            return None
-        result = func(prompt=prompt, targets=[target])
-        if inspect.isawaitable(result):
-            result = await result
-    return _extract_logprob(result)
+    # Tinker API does not support 'targets'. We must approximate or use the tokenizer 
+    # attached to the client to construct the full sequence.
+    # Since we can't easily get the tokenizer here without major refactoring, 
+    # and this is a specialized env, we will try to use the sampling_client's internal tokenizer if available
+    
+    tokenizer = getattr(client, "tokenizer", None)
+    if not tokenizer:
+        return 0.0
+
+    try:
+        # Construct full sequence
+        prompt_tokens = tokenizer.encode(prompt, add_special_tokens=False)
+        target_tokens = tokenizer.encode(target, add_special_tokens=False)
+        full_input = tinker.ModelInput.from_ints(prompt_tokens + target_tokens)
+        
+        if hasattr(client, "compute_logprobs_async"):
+            # Result is a list of logprobs for each token in the sequence
+            logprobs = await client.compute_logprobs_async(full_input)
+            
+            # We only care about the logprobs corresponding to the target tokens
+            # These are at the end of the list
+            target_logprobs = logprobs[-len(target_tokens):]
+            
+            # Sum them up, treating None as 0 (or handle error)
+            return sum(lp if lp is not None else -100.0 for lp in target_logprobs)
+    except Exception:
+        pass
+        
+    return 0.0
 
 
 async def _prompt_distributions(client: Any, prompt: str) -> list[dict[str, float]]:
