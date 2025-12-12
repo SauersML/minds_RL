@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import itertools
-from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
+import chz
 import tinker
 from tinker_cookbook.rl.train import RLDataset, RLDatasetBuilder
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder
@@ -52,7 +52,7 @@ class _StaticEnvDataset(RLDataset):
         ]
 
 
-@dataclass
+@chz.chz
 class GradientProphetRLDatasetBuilder(RLDatasetBuilder):
     model_name: str
     batch_size: int
@@ -85,7 +85,7 @@ class GradientProphetRLDatasetBuilder(RLDatasetBuilder):
         return dataset, None
 
 
-@dataclass
+@chz.chz
 class GradientIntuitionRLDatasetBuilder(RLDatasetBuilder):
     model_name: str
     inner_env_id: str
