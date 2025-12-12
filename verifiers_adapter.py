@@ -30,7 +30,6 @@ from tinker_cookbook.completers import (
     TokenCompleter,
     TokensWithLogprobs,
 )
-from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder
 from tinker_cookbook.rl import train
 from tinker_cookbook.rl.types import EnvGroupBuilder, Trajectory, TrajectoryGroup, Transition
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
@@ -253,18 +252,12 @@ def make_custom_do_group_rollout(
 
         sampling_client = cast(TinkerTokenCompleter, policy).sampling_client
 
-        # Need to handle potential wrappers around the builder to get to VerifiersEnvGroupBuilder
-        # The caller (continuous_runner) should ideally unwrap or pass the right thing,
-        # but let's be safe if possible. However, the type hint says EnvGroupBuilder.
-        # We cast it, assuming the dispatch logic in continuous_runner worked.
-        # If it's wrapped, this cast might be technically incorrect at runtime if we don't unwrap,
-        # but Python is duck-typed.
+        # If it's wrapped, this cast might be technically incorrect at runtime if we don't unwrap
         vf_builder = builder
         while hasattr(vf_builder, "_base"):
             vf_builder = vf_builder._base
 
-        # Now we can safely treat it as VerifiersEnvGroupBuilder (duck typed)
-        # We don't import the class to check isinstance because of the circular/missing import issue resolved in continuous_runner.
+        # Now we can safely treat it as VerifiersEnvGroupBuilder (duck typed)???
 
         async def run_one_rollout() -> tuple[Trajectory, float, dict[str, float | int]]:
             recorded: List[
