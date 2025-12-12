@@ -531,7 +531,7 @@ class GradientIntuitionBuilder:
 
     def build(
         self,
-        sampling_client: Any,
+        sampling_client: Any | None,
         *,
         service_client: Any | None = None,
         base_model: str | None = None,

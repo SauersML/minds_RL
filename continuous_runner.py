@@ -5,108 +5,10 @@ import os
 import random
 import time
 from pathlib import Path
-from typing import Any, Mapping
 
-from custom_utils.trainer import Trainer
+from tinker_cookbook.rl import train
 
-DATA_DIR = Path("data")
-CHECKPOINT_FILE = DATA_DIR / "current_checkpoint.txt"
-HISTORY_FILE = DATA_DIR / "training_history.jsonl"
-SAMPLES_FILE = DATA_DIR / "samples.tsv"
-
-
-def _read_checkpoint() -> str | None:
-    if not CHECKPOINT_FILE.exists():
-        return None
-    content = CHECKPOINT_FILE.read_text(encoding="utf-8").strip()
-    return content or None
-
-
-def _write_checkpoint(checkpoint_id: str) -> None:
-    CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CHECKPOINT_FILE.write_text(checkpoint_id, encoding="utf-8")
-
-
-def _append_summary(results: list[tuple[str, Mapping[str, Any]]], final_checkpoint: str | None) -> None:
-    summary_path = os.getenv("GITHUB_STEP_SUMMARY")
-    if not summary_path:
-        return
-
-    lines = [
-        "## Curriculum run",
-        "",
-        "| Stage | Reward | Loss | Checkpoint |",
-        "| --- | --- | --- | --- |",
-    ]
-    for stage, metrics in results:
-        reward = metrics.get("reward", "n/a")
-        loss = metrics.get("loss", "n/a")
-        checkpoint = metrics.get("checkpoint_id") or final_checkpoint or ""
-        lines.append(f"| {stage} | {reward} | {loss} | {checkpoint} |")
-
-    if final_checkpoint:
-        lines.extend([
-            "",
-            f"Final checkpoint: `{final_checkpoint}`",
-        ])
-
-    try:
-        with open(summary_path, "a", encoding="utf-8") as handle:
-            handle.write("\n".join(lines) + "\n")
-    except Exception:
-        return
-
-
-def _init_shared_clients(
-    config_path: Path, checkpoint_id: str | None
-) -> tuple[Trainer, Any, Any]:
-    trainer = Trainer.from_config(config_path)
-    if checkpoint_id:
-        trainer.config.resume_checkpoint_id = checkpoint_id
-    asyncio.run(trainer._build_clients())
-    trainer._ensure_tokenizer()
-    trainer._ensure_renderer()
-    return trainer, trainer.service_client, trainer.training_client
-
-
-def _run_stage(
-    config_path: Path,
-    checkpoint_id: str | None,
-    *,
-    base_model: str,
-    max_steps: int,
-    service_client: Any,
-    training_client: Any,
-    tokenizer: Any,
-    renderer: Any,
-    sampling_client: Any | None,
-    deadline: float,
-) -> tuple[Mapping[str, Any], str | None, Any | None]:
-    trainer = Trainer.from_config(config_path)
-    trainer.config.base_model = base_model
-    trainer.config.resume_checkpoint_id = checkpoint_id
-    output_dir = Path("outputs") / config_path.stem
-    metrics = trainer.train(
-        max_steps=max_steps,
-        output_dir=output_dir,
-        checkpoint_path=CHECKPOINT_FILE,
-        history_path=HISTORY_FILE,
-        samples_path=SAMPLES_FILE,
-        stage_name=config_path.stem,
-        service_client=service_client,
-        training_client=training_client,
-        tokenizer=tokenizer,
-        renderer=renderer,
-        sampling_client=sampling_client,
-        deadline=deadline,
-    )
-    next_checkpoint = None
-    next_sampling_client = metrics.get("sampling_client") if isinstance(metrics, Mapping) else None
-    if isinstance(metrics, Mapping):
-        next_checkpoint = metrics.get("checkpoint_id")
-    if next_checkpoint:
-        _write_checkpoint(next_checkpoint)
-    return metrics, next_checkpoint, next_sampling_client
+from rl_config import RunnerConfig
 
 
 def main() -> None:
@@ -119,50 +21,36 @@ def main() -> None:
     except Exception:
         pass
 
-    checkpoint_id = _read_checkpoint()
     curriculum = [
         Path("configs/train_ghost.toml"),
         Path("configs/train_prophet.toml"),
         Path("configs/train_self_pred.toml"),
         Path("configs/train_gradient_intuition.toml"),
     ]
-    max_steps = int(os.getenv("CURRICULUM_STEPS", "10"))
     time_budget_seconds = float(os.getenv("CURRICULUM_TIME_LIMIT_SECONDS", 21000))
     deadline = time.time() + time_budget_seconds
 
-    base_trainer, service_client, training_client = _init_shared_clients(
-        curriculum[0], checkpoint_id
-    )
-    tokenizer = base_trainer.tokenizer
-    renderer = base_trainer.renderer
-    base_model = base_trainer.config.base_model
-    sampling_client = None
+    base_url = os.getenv("TINKER_BASE_URL")
+    wandb_project = os.getenv("WANDB_PROJECT")
+    log_root = Path("outputs")
+    log_root.mkdir(parents=True, exist_ok=True)
 
-    results: list[tuple[str, Mapping[str, Any]]] = []
-    latest_checkpoint = checkpoint_id
     while time.time() < deadline:
         config_path = random.choice(curriculum)
-        metrics, new_checkpoint, sampling_client = _run_stage(
-            config_path,
-            latest_checkpoint,
-            base_model=base_model,
-            max_steps=max_steps,
-            service_client=service_client,
-            training_client=training_client,
-            tokenizer=tokenizer,
-            renderer=renderer,
-            sampling_client=sampling_client,
-            deadline=deadline,
-        )
-        if isinstance(metrics, Mapping):
-            results.append((config_path.stem, metrics))
-        if new_checkpoint:
-            latest_checkpoint = new_checkpoint
-            _write_checkpoint(latest_checkpoint)
+        cfg_log_dir = log_root / config_path.stem
+        cfg_log_dir.mkdir(parents=True, exist_ok=True)
 
-    if latest_checkpoint:
-        _write_checkpoint(latest_checkpoint)
-    _append_summary(results, latest_checkpoint)
+        cfg = RunnerConfig(
+            config_path=config_path,
+            log_root=log_root,
+            base_url=base_url,
+            wandb_project=wandb_project,
+        ).build()
+
+        # Respect the time budget by breaking early if the next run would exceed it.
+        if time.time() >= deadline:
+            break
+        asyncio.run(train.main(cfg))
 
 
 if __name__ == "__main__":
