@@ -259,7 +259,24 @@ def make_custom_do_group_rollout(
 
         # Now we can safely treat it as VerifiersEnvGroupBuilder (duck typed)???
 
-        async def run_one_rollout() -> tuple[Trajectory, float, dict[str, float | int]]:
+        # --- FIX: Instantiate separate environments for each rollout in the group ---
+        # Try to use make_envs to get separate instances, fallback to copy if not available
+        if hasattr(vf_builder, "make_envs"):
+            envs = await vf_builder.make_envs()
+        else:
+            import copy
+            envs = [copy.copy(vf_builder.vf_env) for _ in range(group_size)]
+
+        # Ensure we have enough envs (truncate or cycle if needed, though make_envs should be correct)
+        if len(envs) > group_size:
+            envs = envs[:group_size]
+        elif len(envs) < group_size:
+            # This shouldn't happen if make_envs is correct, but for safety:
+            import copy
+            while len(envs) < group_size:
+                envs.append(copy.copy(envs[0]))
+
+        async def run_one_rollout(env) -> tuple[Trajectory, float, dict[str, float | int]]:
             recorded: List[
                 tuple[list[renderers.Message], tinker.ModelInput, list[int], list[float]]
             ] = []
@@ -286,14 +303,14 @@ def make_custom_do_group_rollout(
                 async with gen_sem:
                     # Handle the case where rollout might return (state, auxiliary_info) or just state
                     # Recent changes in Verifiers SDK might return a tuple
-                    result = await vf_builder.vf_env.rollout(
+                    result = await env.rollout(
                         input=rollout_input,
                         client=local_client,
                         model="tinker",
                         sampling_args={},
                     )
             else:
-                result = await vf_builder.vf_env.rollout(
+                result = await env.rollout(
                     input=rollout_input,
                     client=local_client,
                     model="tinker",
@@ -307,7 +324,7 @@ def make_custom_do_group_rollout(
                 state = result
 
             score_sem = await maybe_semaphore(score_limit)
-            await vf_builder.vf_env.rubric.score_rollout(
+            await env.rubric.score_rollout(
                 state=state,
                 score_sem=score_sem,
             )
@@ -339,7 +356,7 @@ def make_custom_do_group_rollout(
             traj = Trajectory(transitions=transitions, final_ob=tinker.ModelInput.empty())
             return traj, float(rs["reward"]), dict(rs["metrics"])
 
-        results = await asyncio.gather(*[run_one_rollout() for _ in range(group_size)])
+        results = await asyncio.gather(*[run_one_rollout(env) for env in envs])
         trajectories_G = [t for (t, _r, _m) in results]
         final_rewards_G = [r for (_t, r, _m) in results]
         metrics_G = [m for (_t, _r, m) in results]
