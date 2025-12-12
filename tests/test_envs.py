@@ -5,7 +5,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import traceback
 from pathlib import Path
 
@@ -128,8 +127,6 @@ async def test_single_env(env_path: Path):
             print("   ❌ No environments created.")
             return False
         
-        env = envs[0]
-
         # 7. Run Initial Observation
         # This checks if the prompt rendering works
         print("   👀 Checking Initial Observation...")
