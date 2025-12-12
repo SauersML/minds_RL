@@ -26,13 +26,11 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
+    
       - name: Install Dependencies
         run: |
           pip install uv
-          uv pip install --system -e .[dev]
-          # Ensure verifiers SDK is present
-          uv pip install --system verifiers
+          uv pip install --system tinker tinker-cookbook verifiers
 
       - name: Resolve Checkpoint Path
         id: resolve
