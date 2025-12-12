@@ -217,6 +217,7 @@ class GradientIntuitionEnv(Env):
         shadow_learning_rate: float = 1e-4,
         shadow_manager: _ShadowClientManager | None = None,
         renderer: Any | None = None,
+        tinker_client: Any | None = None,
     ) -> None:
         self.inner_env = inner_env
         self.alpha = alpha
@@ -225,6 +226,7 @@ class GradientIntuitionEnv(Env):
         self.parser = GradientIntuitionParser()
         self.system_prompt = getattr(inner_env, "system_prompt", None)
         self.few_shot = getattr(inner_env, "few_shot", None)
+        self.tinker_client = tinker_client
         self.service_client = service_client
         self.base_model = base_model
         self.shadow_rank = shadow_rank
@@ -360,6 +362,8 @@ class GradientIntuitionEnv(Env):
         info = {}
         if hasattr(self.renderer, "tokenizer"):
             info["tokenizer"] = self.renderer.tokenizer
+        if self.tinker_client is not None:
+            info["tinker_client"] = self.tinker_client
 
         reward = await self._evaluate_reward(prompt, completion, state, info)
 
@@ -688,6 +692,7 @@ class GradientIntuitionBuilder:
                     shadow_learning_rate=self.shadow_learning_rate,
                     shadow_manager=shadow_manager,
                     renderer=self.renderer,
+                    tinker_client=sampling_client or training_client,
                 )
             )
         return built_envs
