@@ -70,11 +70,6 @@ jobs:
                   ])
           PY
 
-      - name: Check model and steps
-        run: |          
-          # Verify the changes
-          grep "TINKER_MODEL =" tests/test_envs.py
-
       - name: Run Integration Examples (Real)
         # This runs env_runner.py, which creates configs and calls Trainer.train()
         run: |
