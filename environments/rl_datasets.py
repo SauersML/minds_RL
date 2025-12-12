@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import random
 import itertools
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 import chz
@@ -50,6 +52,169 @@ class _StaticEnvDataset(RLDataset):
             _SingleEnvGroupBuilder(factory, group_size=self._group_size)
             for factory in batch_factories
         ]
+
+
+@dataclass
+class _CompositeComponent:
+    name: str
+    dataset: RLDataset
+    weight: float
+
+
+class _TaggedEnvGroupBuilder(EnvGroupBuilder):
+    def __init__(self, base: EnvGroupBuilder, tag: str) -> None:
+        self._base = base
+        self._tag = tag
+
+    async def make_envs(self) -> Sequence[Env]:  # type: ignore[override]
+        return await self._base.make_envs()
+
+    async def compute_group_rewards(  # type: ignore[override]
+        self, trajectory_group: list[Any], env_group: Sequence[Env]
+    ) -> list[tuple[float, Mapping[str, Any]]]:
+        return await self._base.compute_group_rewards(trajectory_group, env_group)
+
+    def logging_tags(self) -> list[str]:
+        base_tags = []
+        try:
+            base_tags = self._base.logging_tags()
+        except Exception:
+            base_tags = []
+        return [self._tag, *base_tags]
+
+
+class CompositeRLDataset(RLDataset):
+    def __init__(
+        self,
+        components: Sequence[_CompositeComponent],
+        *,
+        groups_per_batch: int,
+        total_batches: int,
+        seed: int | None = None,
+    ) -> None:
+        if not components:
+            raise ValueError("CompositeRLDataset requires at least one component")
+
+        weight_sum = sum(c.weight for c in components)
+        if weight_sum <= 0:
+            raise ValueError("Composite component weights must sum to a positive value")
+
+        self._components = list(components)
+        self._groups_per_batch = max(1, int(groups_per_batch))
+        self._total_batches = max(1, int(total_batches))
+        self._seed = seed
+
+        self._normalized_weights = [c.weight / weight_sum for c in self._components]
+        self._queues: dict[str, list[EnvGroupBuilder]] = {c.name: [] for c in self._components}
+        self._indices: dict[str, int] = {c.name: 0 for c in self._components}
+
+    def __len__(self) -> int:  # type: ignore[override]
+        return self._total_batches
+
+    def _rng(self, index: int) -> random.Random:
+        seed = self._seed if self._seed is not None else 0
+        return random.Random(seed + index)
+
+    def _choose_component(self, rng: random.Random) -> _CompositeComponent:
+        return rng.choices(self._components, weights=self._normalized_weights, k=1)[0]
+
+    def _refresh_queue(self, component: _CompositeComponent) -> None:
+        queue = self._queues[component.name]
+        if queue:
+            return
+
+        dataset_len = len(component.dataset)
+        if dataset_len == 0:
+            return
+        batch_idx = self._indices[component.name] % dataset_len
+        self._indices[component.name] += 1
+        try:
+            new_builders = component.dataset.get_batch(batch_idx)
+        except Exception:
+            new_builders = []
+
+        queue.extend([_TaggedEnvGroupBuilder(b, component.name) for b in new_builders])
+
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:  # type: ignore[override]
+        rng = self._rng(index)
+        batch: list[EnvGroupBuilder] = []
+
+        for _ in range(self._groups_per_batch):
+            component = self._choose_component(rng)
+            self._refresh_queue(component)
+            queue = self._queues[component.name]
+            if not queue:
+                # If the queue is still empty (e.g., dataset failure), fall back to the next component
+                fallback = self._choose_component(rng)
+                self._refresh_queue(fallback)
+                queue = self._queues[fallback.name]
+                if not queue:
+                    continue
+
+            batch.append(queue.pop())
+
+        return batch
+
+
+class _RoundRobinDataset(RLDataset):
+    def __init__(self, components: Sequence[_CompositeComponent]) -> None:
+        self._components = [c for c in components if len(c.dataset) > 0]
+        self._offsets: list[int] = []
+        running_total = 0
+        for comp in self._components:
+            self._offsets.append(running_total)
+            running_total += len(comp.dataset)
+        self._total = running_total
+
+    def __len__(self) -> int:  # type: ignore[override]
+        return self._total
+
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:  # type: ignore[override]
+        if not self._components or index >= self._total:
+            return []
+
+        remaining = index
+        for comp, offset in zip(self._components, self._offsets, strict=False):
+            local_index = remaining - offset
+            if 0 <= local_index < len(comp.dataset):
+                builders = comp.dataset.get_batch(local_index)
+                return [_TaggedEnvGroupBuilder(b, comp.name) for b in builders]
+            remaining -= len(comp.dataset)
+        return []
+
+
+@chz.chz
+class CompositeRLDatasetBuilder(RLDatasetBuilder):
+    components: Sequence[tuple[str, RLDatasetBuilder, float]]
+    groups_per_batch: int
+    total_batches: int
+    seed: int | None = None
+
+    async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
+        if not self.components:
+            return _StaticEnvDataset([], batch_size=1, group_size=1), None
+
+        train_components: list[_CompositeComponent] = []
+        eval_components: list[_CompositeComponent] = []
+
+        for name, builder, weight in self.components:
+            train_ds, eval_ds = await builder()
+            train_components.append(_CompositeComponent(name, train_ds, weight))
+            if eval_ds is not None:
+                eval_components.append(_CompositeComponent(name, eval_ds, weight))
+
+        train_dataset = CompositeRLDataset(
+            train_components,
+            groups_per_batch=self.groups_per_batch,
+            total_batches=self.total_batches,
+            seed=self.seed,
+        )
+
+        eval_dataset: RLDataset | None = None
+        if eval_components:
+            eval_dataset = _RoundRobinDataset(eval_components)
+
+        return train_dataset, eval_dataset
 
 
 @chz.chz
@@ -155,6 +320,7 @@ class GradientIntuitionRLDatasetBuilder(RLDatasetBuilder):
 
 
 __all__ = [
+    "CompositeRLDatasetBuilder",
     "GradientIntuitionRLDatasetBuilder",
     "GradientProphetRLDatasetBuilder",
 ]
