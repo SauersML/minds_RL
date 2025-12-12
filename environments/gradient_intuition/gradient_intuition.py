@@ -10,6 +10,7 @@ from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
 import numpy as np
 import verifiers as vf
+import tinker
 
 from .probes import Probe, get_random_probe
 
