@@ -14,7 +14,7 @@ import tinker
 import verifiers as vf
 from tinker_cookbook.rl.types import Env, StepResult
 
-from .probes import Probe, get_random_probe
+from environments.gradient_intuition.gradient_intuition.probes import Probe, get_random_probe
 
 State = MutableMapping[str, Any]
 Messages = list[Mapping[str, Any]]
