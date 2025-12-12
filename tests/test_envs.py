@@ -70,7 +70,7 @@ def install_dependencies():
             if item.is_dir() and (item / "pyproject.toml").exists():
                 run_cmd(["pip", "install", "-e", str(item)], f"Installing Env Package: {item.name}")
 
-async def test_single_env(env_path: Path):
+async def check_single_env(env_path: Path):
     env_name = env_path.name
     print(f"\n🧪 TESTING ENVIRONMENT: [ {env_name} ]")
 
@@ -175,7 +175,7 @@ async def main_async():
     # 3. Execution Loop
     results = {}
     for env_path in discovered:
-        success = await test_single_env(env_path)
+        success = await check_single_env(env_path)
         results[env_path.name] = "PASS" if success else "FAIL"
 
     # 4. Summary
