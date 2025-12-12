@@ -12,7 +12,7 @@ stream_minibatches = 8
 
 [model]
 base_model = "Qwen/Qwen3-30B-A3B"
-renderer_name = "role_colon"
+renderer_name = "qwen3"
 
 [tinker]
 api_key_env = "TINKER_API_KEY"
