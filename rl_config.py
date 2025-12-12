@@ -112,6 +112,7 @@ class RunnerConfig:
     async_off_policy_steps: int = 2
     stream_minibatches: int = 4
     wandb_project: str | None = None
+    initial_checkpoint: str | None = None
 
     def build(self) -> Config:
         raw = tomllib.loads(Path(self.config_path).read_text())
@@ -154,6 +155,7 @@ class RunnerConfig:
             loss_fn=_loss_fn(trainer_cfg),
             lora_rank=int(trainer_cfg.get("training_rank", 32)),
             log_path=str(log_path),
+            load_checkpoint_path=self.initial_checkpoint,
             async_config=async_config,
             stream_minibatch_config=stream_cfg,
             save_every=int(trainer_cfg.get("save_every", 20)),
