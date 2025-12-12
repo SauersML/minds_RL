@@ -403,8 +403,7 @@ class GradientIntuitionEnv(Env):
             return task_reward
 
         actual_delta = await self._measure_probe_delta(task_answer, info)
-        if actual_delta is None:
-            return task_reward
+        # _measure_probe_delta now raises exception on failure instead of returning None
 
         intuition_score = max(0.0, 1.0 - abs(prediction - actual_delta))
         return task_reward + self.alpha * intuition_score
@@ -557,17 +556,20 @@ class GradientIntuitionEnv(Env):
 
     async def _measure_probe_delta(
         self, task_answer: str, info: Mapping[str, Any] | None
-    ) -> float | None:
+    ) -> float:
         probe = self._current_probe
         sample = self._current_sample
         if probe is None or sample is None:
-            return None
+             # This indicates internal state inconsistency
+             raise RuntimeError("Probe or sample is missing in _measure_probe_delta")
+
         tokenizer = info.get("tokenizer") if isinstance(info, Mapping) else None
         if tokenizer is None:
-            return None
+            raise ValueError("Tokenizer is missing in _measure_probe_delta")
+
         shadow_client = await self._ensure_shadow_client(reset=True)
         if shadow_client is None:
-            return None
+            raise RuntimeError("Failed to ensure shadow_client in _measure_probe_delta")
 
         probe_question = probe.get("question", "")
         probe_answer = probe.get("answer", "")
@@ -575,20 +577,21 @@ class GradientIntuitionEnv(Env):
             shadow_client, probe_question, probe_answer, tokenizer
         )
         if pre_lp is None:
-            return None
+            raise RuntimeError("Failed to compute pre-update logprob in _measure_probe_delta")
 
         prompt_text = self._current_prompt or str(
             sample.get("prompt") or sample.get("question") or ""
         )
         updated = await self._shadow_update(prompt_text, task_answer, tokenizer)
         if not updated:
-            return None
+            raise RuntimeError("Shadow update failed in _measure_probe_delta")
 
         post_lp = await self._compute_logprob(
             shadow_client, probe_question, probe_answer, tokenizer
         )
         if post_lp is None:
-            return None
+            raise RuntimeError("Failed to compute post-update logprob in _measure_probe_delta")
+
         return float(post_lp - pre_lp)
 
 

@@ -104,32 +104,37 @@ async def _target_logprob_async(client: Any, prompt: str, target: str) -> float 
     
     tokenizer = getattr(client, "tokenizer", None)
     if not tokenizer:
+        raise ValueError("Tokenizer is missing in _target_logprob_async")
+
+    # Construct full sequence
+    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=False)
+    target_tokens = tokenizer.encode(target, add_special_tokens=False)
+
+    if not target_tokens:
+        # If target is non-empty but tokens are empty, that's suspicious but could happen with some tokenizers
+        if target.strip():
+            raise ValueError(f"Tokenizer produced empty tokens for non-empty target: '{target}'")
         return 0.0
 
-    try:
-        # Construct full sequence
-        prompt_tokens = tokenizer.encode(prompt, add_special_tokens=False)
-        target_tokens = tokenizer.encode(target, add_special_tokens=False)
-        full_input = tinker.ModelInput.from_ints(prompt_tokens + target_tokens)
+    full_input = tinker.ModelInput.from_ints(prompt_tokens + target_tokens)
+
+    if hasattr(client, "compute_logprobs_async"):
+        # Result is a list of logprobs for each token in the sequence
+        logprobs = await client.compute_logprobs_async(full_input)
         
-        if hasattr(client, "compute_logprobs_async"):
-            # Result is a list of logprobs for each token in the sequence
-            logprobs = await client.compute_logprobs_async(full_input)
-            
-            # We only care about the logprobs corresponding to the target tokens
-            # These are at the end of the list
-            target_logprobs = logprobs[-len(target_tokens):]
-            
-            # If any logprob is None, we cannot reliably compute the sum. Return None.
-            if any(lp is None for lp in target_logprobs):
-                return None
-            return sum(target_logprobs)
-    except Exception:
-        print("WARNING: issue with logprob summing.")
-        pass
+        if not logprobs:
+             raise RuntimeError("compute_logprobs_async returned empty logprobs")
+
+        # We only care about the logprobs corresponding to the target tokens
+        # These are at the end of the list
+        target_logprobs = logprobs[-len(target_tokens):]
         
-    return None
-    return 0.0
+        # If any logprob is None, we cannot reliably compute the sum. Return None.
+        if any(lp is None for lp in target_logprobs):
+            raise RuntimeError("Received None in target_logprobs")
+        return sum(target_logprobs)
+
+    raise RuntimeError("Client has no compute_logprobs_async method")
 
 
 async def _prompt_distributions(client: Any, prompt: str) -> list[dict[str, float]]:
@@ -399,7 +404,7 @@ class GradientProphetEnv(Env):
         task = str(self.sample.get("task", "in_context"))
 
         if not lesson_input or not lesson_target or not probes:
-            return 0.0
+            raise ValueError("Missing lesson_input, lesson_target, or probes in _evaluate_reward")
 
         if task == "in_context":
             return await self._reward_in_context(predictions, lesson_input, lesson_target, probes)
@@ -511,6 +516,13 @@ class GradientProphetEnv(Env):
         kl_scores = [score for score in probe_scores if score is not None]
 
         if not kl_scores:
+            if probes:
+                 # If there were probes but we got no scores, and didn't crash earlier,
+                 # it implies _score_probe returned None for all of them.
+                 # This shouldn't happen if infra errors raise exceptions, unless
+                 # _score_probe explicitly catches them or handles specific None cases.
+                 # Given the strict requirement, we should error out.
+                 raise RuntimeError("All probe scores failed to compute (returned None)")
             return 0.0
 
         actual_vec = np.array(kl_scores, dtype=float)

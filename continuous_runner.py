@@ -311,6 +311,7 @@ def _install_deadline_guard(stop_time: float | None) -> None:
 
                 wrapped_trajectory_group = await trajectory_groups_queue.get()
                 if wrapped_trajectory_group is None:
+                    logger.warning("Dropped a trajectory group (likely constant reward or rollout failure). If this happens often, training will hang.")
                     continue
 
                 @train.scope
