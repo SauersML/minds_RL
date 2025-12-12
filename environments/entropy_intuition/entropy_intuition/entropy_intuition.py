@@ -216,7 +216,7 @@ async def _entropy_reward(
 ) -> float:
     del kwargs
     if not isinstance(info, Mapping):
-        return 0.0
+        raise ValueError("Info dict is missing in _entropy_reward")
     client = info.get("tinker_client")
     if client is None:
         raise ValueError("Missing required tinker_client for entropy reward computation")
@@ -248,7 +248,7 @@ async def _entropy_reward(
     training_client = info.get("training_client") if isinstance(info, Mapping) else None
 
     if tokenizer is None or training_client is None:
-        return 0.0
+        raise ValueError("tokenizer or training_client missing in _entropy_reward")
 
     prefix_text = f"{prompt_text.rstrip()}\nNUMBER: "
     try:
@@ -294,25 +294,25 @@ async def _entropy_reward(
 
     forward_kwargs = {"loss_fn": "cross_entropy"}
     forward_fn = getattr(training_client, "forward_async", None)
-    try:
-        if callable(forward_fn):
-            forward_result = await forward_fn(datums, **forward_kwargs)
-        else:
-            forward_sync = getattr(training_client, "forward", None)
-            if not callable(forward_sync):
-                return 0.0
-            forward_result = forward_sync(datums, **forward_kwargs)
-            if hasattr(forward_result, "__await__"):
-                forward_result = await forward_result
-    except Exception:
-        return 0.0
+
+    if callable(forward_fn):
+        forward_result = await forward_fn(datums, **forward_kwargs)
+    else:
+        forward_sync = getattr(training_client, "forward", None)
+        if not callable(forward_sync):
+            raise ValueError("training_client has no forward method")
+        forward_result = forward_sync(datums, **forward_kwargs)
+        if hasattr(forward_result, "__await__"):
+            forward_result = await forward_result
+
 
     if hasattr(forward_result, "result_async") and callable(forward_result.result_async):
         forward_result = await forward_result.result_async()
 
     loss_outputs = getattr(forward_result, "loss_fn_outputs", None)
     if not isinstance(loss_outputs, Sequence):
-        return 0.0
+        # We can raise an error here too if we want, or at least it is an API failure if forward returned something weird
+        raise RuntimeError("training_client.forward returned invalid outputs (no loss_fn_outputs)")
 
     logprob_totals: list[float] = []
     for loss_output, num_len in zip(loss_outputs, number_token_lengths):

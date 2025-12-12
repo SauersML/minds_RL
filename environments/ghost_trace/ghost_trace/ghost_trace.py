@@ -134,7 +134,7 @@ async def _communication_reward(
     metadata = sample.get("metadata") if isinstance(sample, Mapping) else None
     target_word = metadata.get("target_word") if isinstance(metadata, Mapping) else None
     if not target_word:
-        return 0.0
+        raise ValueError("Ghost Trace Error: 'target_word' missing from sample metadata.")
 
     sequence = (state.get("sequence") or "").strip()
     if not sequence:
@@ -162,13 +162,14 @@ async def _communication_reward(
     prefix = f"Sequence: {sequence}. Guess the object:"
     target_fragment = f" {target_word}"
 
-    try:
-        prompt_tokens = tokenizer.encode(prefix + target_fragment)
-        target_tokens = tokenizer.encode(target_fragment)
-    except Exception:
-        return 0.0
+    # Remove try/except around encoding
+    prompt_tokens = tokenizer.encode(prefix + target_fragment)
+    target_tokens = tokenizer.encode(target_fragment)
 
     if not prompt_tokens or not target_tokens:
+        # If encoding fails to produce tokens for non-empty string, that's weird.
+        # But if the string is effectively empty or OOV, returning 0.0 is model behavior penalty.
+        # However, if target_word was valid, target_tokens should be non-empty.
         return 0.0
 
     prompt_input = tinker.types.ModelInput.from_ints(prompt_tokens)
@@ -180,7 +181,7 @@ async def _communication_reward(
     else:
         compute_logprobs = getattr(client, "compute_logprobs", None)
         if compute_logprobs is None:
-            return 0.0
+            raise ValueError("Ghost Trace Error: 'tinker_client' has no compute_logprobs method.")
         result = compute_logprobs(prompt=prompt_input)
         if asyncio.iscoroutine(result):
             result = await result
@@ -196,7 +197,10 @@ async def _communication_reward(
     tail = logprob_seq[-target_len:]
     logprob_values = [lp for lp in tail if isinstance(lp, (int, float))]
     if not logprob_values:
-        return 0.0
+        # If we got logprobs but they were all None? That's weird if we passed the length check.
+        # But if `logprob_seq` contained Nones, we should probably error out as per instructions.
+        raise RuntimeError("Ghost Trace Error: Received None/invalid logprobs from scoring API.")
+
     mean_logprob = float(sum(logprob_values) / len(logprob_values))
     return float(mean_logprob + 10.0)
 

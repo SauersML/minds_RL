@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, overload, Literal, cast
 
@@ -174,6 +175,9 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         # build ChatCompletion via pydantic validation using renderer parsing
         assistant_message, parse_success = self._parent.renderer.parse_response(tokens)
         content_text = assistant_message["content"]
+        if not parse_success:
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Renderer failed to parse output: {tokens}. Treating as length failure.")
         finish_reason = "stop" if parse_success else "length"
 
         # Construct the response object manually to avoid Pydantic validation strictness if possible,
