@@ -15,8 +15,5 @@ test = [
     "transformers>=4.44",
 ]
 
-[tool.hatch.build]
-include = ["self_prediction.py", "__init__.py"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["self_prediction"]

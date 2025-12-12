@@ -14,8 +14,5 @@ dependencies = [
   "tinker",
 ]
 
-[tool.hatch.build]
-include = ["entropy_intuition.py", "__init__.py"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["entropy_intuition"]
