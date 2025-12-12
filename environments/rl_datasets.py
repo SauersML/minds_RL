@@ -63,7 +63,7 @@ class GradientProphetRLDatasetBuilder(RLDatasetBuilder):
 
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
         service_client = tinker.ServiceClient(base_url=self.base_url)
-        sampling_client = await service_client.create_sampling_client_from_model_async(self.model_name)
+        sampling_client = await service_client.create_sampling_client_async(base_model=self.model_name)
 
         dataset_builder = GradientProphetDatasetBuilder(seed=self.seed)
         envs = dataset_builder.build(sampling_client)
