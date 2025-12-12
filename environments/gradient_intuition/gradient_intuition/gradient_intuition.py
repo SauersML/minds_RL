@@ -4,13 +4,15 @@ import importlib
 import importlib.util
 import inspect
 import random
+import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
 import numpy as np
-import verifiers as vf
 import tinker
+import verifiers as vf
+from tinker_cookbook.rl.types import Env, StepResult
 
 from .probes import Probe, get_random_probe
 
@@ -23,13 +25,13 @@ class GradientIntuitionParser(vf.Parser):
 
     def __init__(self) -> None:
         super().__init__()
-        import re
-
         self._prediction_pattern = re.compile(
             r"prediction\W*[:\-]\W*([-+]?\d*\.\d+(?:[eE][-+]?\d+)?|[-+]?\d+)",
             re.IGNORECASE,
         )
-        self._answer_pattern = re.compile(r"answer\s*[:\-]\s*(.+)", re.IGNORECASE | re.DOTALL)
+        self._answer_pattern = re.compile(
+            r"answer\s*[:\-]\s*(.+)", re.IGNORECASE | re.DOTALL
+        )
 
     def parse(self, text: str) -> dict[str, Any] | None:  # type: ignore[override]
         if not text:
@@ -174,14 +176,22 @@ class _ShadowClientManager:
             return self.client
         if self.service_client is None or not self.base_model:
             return None
-        creator = getattr(self.service_client, "create_lora_training_client_async", None)
+        creator = getattr(
+            self.service_client, "create_lora_training_client_async", None
+        )
         if callable(creator):
-            self.client = await creator(base_model=self.base_model, rank=self.shadow_rank)
+            self.client = await creator(
+                base_model=self.base_model, rank=self.shadow_rank
+            )
         else:
-            creator_sync = getattr(self.service_client, "create_lora_training_client", None)
+            creator_sync = getattr(
+                self.service_client, "create_lora_training_client", None
+            )
             if not callable(creator_sync):
                 return None
-            self.client = creator_sync(base_model=self.base_model, rank=self.shadow_rank)
+            self.client = creator_sync(
+                base_model=self.base_model, rank=self.shadow_rank
+            )
         return self.client
 
     async def reset_client(self) -> Any | None:
@@ -191,7 +201,7 @@ class _ShadowClientManager:
         return await self.get_client()
 
 
-class GradientIntuitionEnv:
+class GradientIntuitionEnv(Env):
     """Wrap an existing environment with a gradient-prediction objective."""
 
     def __init__(
@@ -270,9 +280,13 @@ class GradientIntuitionEnv:
             except Exception:
                 prompt = None
         if not prompt and hasattr(self.inner_env, "state"):
-            state_sample = getattr(self.inner_env, "state", {}).get("sample")  # type: ignore[arg-type]
+            state_sample = getattr(self.inner_env, "state", {})
+            if hasattr(state_sample, "get"):
+                state_sample = state_sample.get("sample")  # type: ignore[arg-type]
             if isinstance(state_sample, Mapping):
-                prompt = str(state_sample.get("prompt") or state_sample.get("question") or "")
+                prompt = str(
+                    state_sample.get("prompt") or state_sample.get("question") or ""
+                )
         if not prompt:
             sample = self._sample_task()
             if isinstance(sample, Mapping):
@@ -288,7 +302,10 @@ class GradientIntuitionEnv:
         tokenizer = getattr(self.renderer, "tokenizer", None)
         if tokenizer is not None and hasattr(tokenizer, "encode"):
             try:
-                return tinker.ModelInput.from_ints(tokenizer.encode(prompt)), list(stop_seqs)
+                return (
+                    tinker.ModelInput.from_ints(tokenizer.encode(prompt)),
+                    list(stop_seqs),
+                )
             except Exception:
                 pass
         return tinker.ModelInput.from_ints([]), list(stop_seqs)
@@ -297,7 +314,11 @@ class GradientIntuitionEnv:
         base_prompt_str = self._extract_base_prompt()
         self._current_prompt = base_prompt_str
 
-        sample = getattr(self.inner_env, "state", {}).get("sample") if hasattr(self.inner_env, "state") else None
+        sample = (
+            getattr(self.inner_env, "state", {}).get("sample")
+            if hasattr(self.inner_env, "state")
+            else None
+        )
         if not isinstance(sample, Mapping) or not sample:
             sample = self._sample_task()
         if not isinstance(sample, Mapping):
@@ -306,7 +327,9 @@ class GradientIntuitionEnv:
         self._current_sample = sample
         self._current_probe = probe
 
-        prompt = base_prompt_str or str(sample.get("prompt") or sample.get("question") or "")
+        prompt = base_prompt_str or str(
+            sample.get("prompt") or sample.get("question") or ""
+        )
         prompt = prompt.replace("Output only the numbers, nothing else.", "")
 
         instructions = sample.get("instructions") or _DEF_INSTRUCTIONS
@@ -314,13 +337,39 @@ class GradientIntuitionEnv:
         probe_a = probe.get("answer", "")
         meta_block = (
             f"\n\n---\nMeta-Task: {instructions}\n"
-            f"Probe: \"{probe_q}\"\n"
-            f"Probe target answer: \"{probe_a}\"\n"
+            f'Probe: "{probe_q}"\n'
+            f'Probe target answer: "{probe_a}"\n'
             "You may reason before answering, but the final output must follow the requested format.\n"
             "Remember to provide the prediction first, then the task answer."
         )
         rendered_prompt = f"{prompt}{meta_block}\n\nPREDICTION: \nANSWER: "
         return self._render_prompt(rendered_prompt)
+
+    async def step(self, action: Sequence[int]) -> StepResult:
+        # Convert action tokens to messages using renderer
+        message, _ = self.renderer.parse_response(list(action))
+        completion = [message]
+
+        # Prepare prompt for rubric
+        prompt = [{"role": "user", "content": self._current_prompt}]
+
+        # Get state from inner environment
+        state = getattr(self.inner_env, "state", {})
+
+        # Pass tokenizer in info for probe evaluation
+        info = {}
+        if hasattr(self.renderer, "tokenizer"):
+            info["tokenizer"] = self.renderer.tokenizer
+
+        reward = await self._evaluate_reward(prompt, completion, state, info)
+
+        return StepResult(
+            reward=reward,
+            episode_done=True,
+            next_observation=tinker.ModelInput.empty(),
+            next_stop_condition=[],
+            metrics={},
+        )
 
     async def _evaluate_reward(
         self,
@@ -342,7 +391,9 @@ class GradientIntuitionEnv:
         if not parsed:
             return 0.0
 
-        prediction = parsed.get("prediction") if isinstance(parsed, Mapping) else None
+        prediction = (
+            parsed.get("prediction") if isinstance(parsed, Mapping) else None
+        )
         task_answer = parsed.get("answer") if isinstance(parsed, Mapping) else None
         if task_answer is None:
             return 0.0
@@ -358,13 +409,19 @@ class GradientIntuitionEnv:
         intuition_score = max(0.0, 1.0 - abs(prediction - actual_delta))
         return task_reward + self.alpha * intuition_score
 
-    async def _task_reward(self, task_answer: str, info: Mapping[str, Any] | None) -> float:
+    async def _task_reward(
+        self, task_answer: str, info: Mapping[str, Any] | None
+    ) -> float:
         sample = self._current_sample or {}
         inner_rubric = getattr(self.inner_env, "rubric", None)
         if inner_rubric is None:
             return 0.0
         answer_value = sample.get("answer") if isinstance(sample, Mapping) else ""
-        state: State = getattr(self.inner_env, "state", {}) if hasattr(self.inner_env, "state") else {}
+        state: State = (
+            getattr(self.inner_env, "state", {})
+            if hasattr(self.inner_env, "state")
+            else {}
+        )
         prompt_msgs = [
             {
                 "role": "user",
@@ -378,9 +435,13 @@ class GradientIntuitionEnv:
             info_map.update(info)
 
         reward_total = 0.0
-        weights: Iterable[float] = getattr(inner_rubric, "weights", [1.0] * len(inner_rubric.funcs))
+        weights: Iterable[float] = getattr(
+            inner_rubric, "weights", [1.0] * len(inner_rubric.funcs)
+        )
         for func, weight in zip(inner_rubric.funcs, weights):
-            result = func(prompt_msgs, completion_msgs, str(answer_value or ""), state, info_map)
+            result = func(
+                prompt_msgs, completion_msgs, str(answer_value or ""), state, info_map
+            )
             result = await _maybe_await(result)
             try:
                 reward_total += float(result) * float(weight)
@@ -392,10 +453,6 @@ class GradientIntuitionEnv:
         self, client: Any, probe_question: str, probe_answer: str, tokenizer: Any
     ) -> float | None:
         if client is None or tokenizer is None:
-            return None
-        try:
-            import tinker
-        except ModuleNotFoundError:
             return None
 
         question_tokens = (
@@ -452,7 +509,7 @@ class GradientIntuitionEnv:
     async def _ensure_shadow_client(self, *, reset: bool = False) -> Any:
         if reset:
             # Resetting should discard the previous adapter so that concurrent
-            # rewards never share a mutated shadow model instance.
+            # rollouts to a shared adapter.
             self._shadow_client = await self._shadow_manager.reset_client()
             return self._shadow_client
         if self._shadow_client is not None:
@@ -460,23 +517,29 @@ class GradientIntuitionEnv:
         self._shadow_client = await self._shadow_manager.get_client()
         return self._shadow_client
 
-    async def _shadow_update(self, prompt_text: str, completion_text: str, tokenizer: Any) -> bool:
+    async def _shadow_update(
+        self, prompt_text: str, completion_text: str, tokenizer: Any
+    ) -> bool:
         shadow_client = await self._ensure_shadow_client()
         if shadow_client is None:
             return False
-        try:
-            import tinker
-        except ModuleNotFoundError:
-            return False
 
-        tokens = tokenizer.encode(prompt_text + completion_text, add_special_tokens=False) if hasattr(tokenizer, "encode") else []
+        tokens = (
+            tokenizer.encode(
+                prompt_text + completion_text, add_special_tokens=False
+            )
+            if hasattr(tokenizer, "encode")
+            else []
+        )
         if len(tokens) < 2:
             return False
         input_tokens = np.array(tokens[:-1], dtype=np.int64)
         target_tokens = np.array(tokens[1:], dtype=np.int64)
         datum = tinker.Datum(
             model_input=tinker.ModelInput.from_ints(input_tokens.tolist()),
-            loss_fn_inputs={"target_tokens": tinker.TensorData.from_numpy(target_tokens)},
+            loss_fn_inputs={
+                "target_tokens": tinker.TensorData.from_numpy(target_tokens)
+            },
         )
 
         forward_fn = getattr(shadow_client, "forward_backward_async", None)
@@ -492,7 +555,9 @@ class GradientIntuitionEnv:
             await _maybe_await(shadow_client.optim_step(adam))
         return True
 
-    async def _measure_probe_delta(self, task_answer: str, info: Mapping[str, Any] | None) -> float | None:
+    async def _measure_probe_delta(
+        self, task_answer: str, info: Mapping[str, Any] | None
+    ) -> float | None:
         probe = self._current_probe
         sample = self._current_sample
         if probe is None or sample is None:
@@ -506,16 +571,22 @@ class GradientIntuitionEnv:
 
         probe_question = probe.get("question", "")
         probe_answer = probe.get("answer", "")
-        pre_lp = await self._compute_logprob(shadow_client, probe_question, probe_answer, tokenizer)
+        pre_lp = await self._compute_logprob(
+            shadow_client, probe_question, probe_answer, tokenizer
+        )
         if pre_lp is None:
             return None
 
-        prompt_text = self._current_prompt or str(sample.get("prompt") or sample.get("question") or "")
+        prompt_text = self._current_prompt or str(
+            sample.get("prompt") or sample.get("question") or ""
+        )
         updated = await self._shadow_update(prompt_text, task_answer, tokenizer)
         if not updated:
             return None
 
-        post_lp = await self._compute_logprob(shadow_client, probe_question, probe_answer, tokenizer)
+        post_lp = await self._compute_logprob(
+            shadow_client, probe_question, probe_answer, tokenizer
+        )
         if post_lp is None:
             return None
         return float(post_lp - pre_lp)
@@ -567,7 +638,9 @@ class GradientIntuitionBuilder:
         else:
             module = importlib.import_module(self.inner_env_id)
         if not hasattr(module, "load_environment"):
-            raise AttributeError("Inner environment module must define load_environment")
+            raise AttributeError(
+                "Inner environment module must define load_environment"
+            )
         return module.load_environment(**self.inner_env_args)
 
     def build(
@@ -586,7 +659,9 @@ class GradientIntuitionBuilder:
             envs = [inner_env]
 
         rng = random.Random(self.seed) if self.seed is not None else None
-        probes = self.probes if self.probes is not None else [get_random_probe(rng)]
+        probes = (
+            self.probes if self.probes is not None else [get_random_probe(rng)]
+        )
         if not probes:
             probes = [get_random_probe()]
         built_envs: list[GradientIntuitionEnv] = []
