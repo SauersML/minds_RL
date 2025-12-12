@@ -15,6 +15,27 @@ from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroup
 from rl_config import RunnerConfig
 from verifiers_adapter import make_custom_do_group_rollout
 
+# --- Monkeypatch to fix noisy shutdown error in Tinker library ---
+# The InternalClientHolder.__del__ method can raise AttributeError/RuntimeWarning
+# during interpreter shutdown if the event loop is already closed or the object
+# was not fully initialized. We patch it to suppress these errors.
+try:
+    from tinker.lib.internal_client_holder import InternalClientHolder
+
+    _original_del = getattr(InternalClientHolder, "__del__", None)
+
+    def _safe_del(self):
+        try:
+            if _original_del:
+                _original_del(self)
+        except (AttributeError, RuntimeError):
+            pass
+
+    InternalClientHolder.__del__ = _safe_del
+except ImportError:
+    pass
+# -----------------------------------------------------------------
+
 logger = logging.getLogger(__name__)
 
 def _install_advantage_normalization() -> None:
