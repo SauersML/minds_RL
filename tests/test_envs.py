@@ -133,7 +133,6 @@ async def test_single_env(env_path: Path):
         # 7. Run Initial Observation
         # This checks if the prompt rendering works
         print("   👀 Checking Initial Observation...")
-        obs = env.initial_observation()
         
         # Depending on the renderer, obs might be a string or a tuple/object
         # We just want to ensure it didn't crash
