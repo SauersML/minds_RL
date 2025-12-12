@@ -53,12 +53,29 @@ def discover_and_install_envs():
         sys.exit(1)
 
     discovered = []
-    
-    # Look for any directory containing a pyproject.toml or setup.py
-    for item in envs_dir.iterdir():
-        if item.is_dir() and (item / "pyproject.toml").exists():
-            discovered.append(item)
+
+    # Ensure environments/ is importable for non-packaged envs
+    envs_dir_str = str(envs_dir)
+    if envs_dir_str not in sys.path:
+        sys.path.insert(0, envs_dir_str)
+
+    # Look for any directory containing a pyproject.toml or __init__.py
+    for item in sorted(envs_dir.iterdir()):
+        if not item.is_dir():
+            continue
+
+        has_pyproject = (item / "pyproject.toml").exists()
+        has_init = (item / "__init__.py").exists()
+
+        if not (has_pyproject or has_init):
+            continue
+
+        discovered.append(item)
+
+        if has_pyproject:
             run_cmd(["pip", "install", "-e", str(item)], f"Installing env: {item.name}")
+        else:
+            print(f"   ℹ️  Added {item.name} to sys.path (no pyproject found)")
     
     if not discovered:
         print("⚠️  No environments found in environments/ directory.")

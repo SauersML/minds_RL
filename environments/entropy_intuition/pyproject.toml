@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "entropy-intuition-env"
+version = "0.0.0"
+description = "Entropy intuition verification environment"
+dependencies = [
+  "verifiers",
+  "custom-utils",
+  "numpy",
+  "datasets",
+  "tinker",
+]
+
+[tool.hatch.build]
+include = ["entropy_intuition.py", "__init__.py"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["entropy_intuition"]
