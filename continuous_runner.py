@@ -1,3 +1,17 @@
+"""Continuous RL Training Runner.
+
+This script implements a continuous training loop that selects configuration
+files from a curriculum and executes them using the Tinker RL harness. It handles
+checkpoint management (resuming from the last state), logging setup (WandB),
+and time budgeting.
+
+Key Features:
+- **Curriculum**: Randomly selects environments from a predefined list.
+- **Checkpointing**: Automatically loads the latest checkpoint from previous runs.
+- **Time Budget**: Respects a global time limit (useful for scheduled jobs).
+- **WandB**: Integrates with Weights & Biases for experiment tracking.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +29,15 @@ from verifiers_adapter import make_custom_do_group_rollout
 
 
 async def _run_config(cfg: train.Config) -> None:
+    """Execute a single training run based on the provided configuration.
+
+    This function patches the ``do_group_rollout`` function in ``tinker_cookbook``
+    if the environment uses the Verifiers adapter. This allows injection of custom
+    logic for rollout execution and scoring.
+
+    Args:
+        cfg: The training configuration object.
+    """
     if isinstance(cfg.dataset_builder, VerifiersRLDatasetBuilder):
         original_do_group_rollout = train.do_group_rollout
         group_size = getattr(cfg.dataset_builder, "group_size", 1)
@@ -34,6 +57,17 @@ async def _run_config(cfg: train.Config) -> None:
 
 
 def _load_last_state_checkpoint(log_dir: Path) -> str | None:
+    """Find the most recent training checkpoint in the log directory.
+
+    Parses the ``checkpoints.jsonl`` file to find the last entry with a
+    ``state_path``. This path is used to resume training in the next iteration.
+
+    Args:
+        log_dir: The directory containing the training logs.
+
+    Returns:
+        The Tinker URI of the last checkpoint, or None if not found.
+    """
     checkpoints_file = log_dir / "checkpoints.jsonl"
     if not checkpoints_file.exists():
         return None
@@ -58,6 +92,7 @@ def _load_last_state_checkpoint(log_dir: Path) -> str | None:
 
 
 def main() -> None:
+    """Main entry point for the continuous runner."""
     try:
         import wandb  # type: ignore
 

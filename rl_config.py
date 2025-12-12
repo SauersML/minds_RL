@@ -1,3 +1,10 @@
+"""Configuration parsing and construction for RL runs.
+
+This module converts simple TOML configuration files into the strict ``Config``
+objects required by the ``tinker_cookbook`` training loop. It handles the
+instantiation of dataset builders, tokenizers, and renderers.
+"""
+
 from __future__ import annotations
 
 import os
@@ -19,6 +26,7 @@ from environments.rl_datasets import (
 
 
 def _ensure_api_key(config: Mapping[str, Any]) -> None:
+    """Validate that the Tinker API key is present in the environment variables."""
     api_key_env = config.get("tinker", {}).get("api_key_env", "TINKER_API_KEY")
     api_key = os.getenv(api_key_env)
     if not api_key:
@@ -26,6 +34,7 @@ def _ensure_api_key(config: Mapping[str, Any]) -> None:
 
 
 def _group_size(trainer_cfg: Mapping[str, Any]) -> int:
+    """Extract the number of rollouts per example (Group Size)."""
     try:
         return max(1, int(trainer_cfg.get("rollouts_per_example", 4)))
     except Exception:
@@ -33,6 +42,7 @@ def _group_size(trainer_cfg: Mapping[str, Any]) -> int:
 
 
 def _batch_size(trainer_cfg: Mapping[str, Any]) -> int:
+    """Extract the batch size (Groups per Batch)."""
     try:
         return max(1, int(trainer_cfg.get("groups_per_batch", trainer_cfg.get("batch_size", 4))))
     except Exception:
@@ -40,6 +50,7 @@ def _batch_size(trainer_cfg: Mapping[str, Any]) -> int:
 
 
 def _max_tokens(trainer_cfg: Mapping[str, Any]) -> int:
+    """Extract the maximum new tokens for generation."""
     args = trainer_cfg.get("args", {}) if isinstance(trainer_cfg, Mapping) else {}
     try:
         return int(args.get("max_new_tokens", 2048))
@@ -48,12 +59,14 @@ def _max_tokens(trainer_cfg: Mapping[str, Any]) -> int:
 
 
 def _loss_fn(trainer_cfg: Mapping[str, Any]) -> str:
+    """Extract the loss function name."""
     loss = trainer_cfg.get("loss_fn", "importance_sampling")
     return str(loss)
 
 
 @chz.chz
 class AugmentedVerifiersRLDatasetBuilder(VerifiersRLDatasetBuilder):
+    """Extension of VerifiersRLDatasetBuilder that explicitly sets group_size."""
     group_size: int = 1
 
 
@@ -66,6 +79,19 @@ def _build_dataset_builder(
     renderer: Any,
     base_url: str | None,
 ) -> VerifiersRLDatasetBuilder | GradientProphetRLDatasetBuilder | GradientIntuitionRLDatasetBuilder:
+    """Construct the appropriate DatasetBuilder based on the environment ID.
+
+    Args:
+        env_cfg: The 'env' section of the TOML config.
+        model_name: The name of the base model.
+        batch_size: The batch size (groups per batch).
+        group_size: The group size (rollouts per example).
+        renderer: The renderer instance.
+        base_url: Optional base URL for Tinker API.
+
+    Returns:
+        A DatasetBuilder instance.
+    """
     env_id = str(env_cfg.get("id", "")).strip()
     env_args = env_cfg.get("args", {}) if isinstance(env_cfg, Mapping) else {}
 
@@ -109,6 +135,7 @@ def _build_dataset_builder(
 
 @dataclass
 class RunnerConfig:
+    """Helper class to build the full training Config from inputs."""
     config_path: Path
     log_root: Path
     base_url: str | None = None
@@ -118,6 +145,7 @@ class RunnerConfig:
     initial_checkpoint: str | None = None
 
     def build(self) -> Config:
+        """Parse the TOML config and return a tinker_cookbook Config object."""
         raw = tomllib.loads(Path(self.config_path).read_text())
         _ensure_api_key(raw)
 
