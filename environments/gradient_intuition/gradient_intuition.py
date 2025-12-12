@@ -293,7 +293,7 @@ class GradientIntuitionEnv:
                 pass
         return tinker.ModelInput.from_ints([]), list(stop_seqs)
 
-    def initial_observation(self) -> tuple[tinker.ModelInput, list[int]]:
+    async def initial_observation(self) -> tuple[tinker.ModelInput, list[int]]:
         base_prompt_str = self._extract_base_prompt()
         self._current_prompt = base_prompt_str
 
