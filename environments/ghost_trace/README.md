@@ -19,10 +19,14 @@ The reward measures the **communication success**. It performs a "round-trip" ve
 1.  **Parse**: Extract the sequence $S = [n_1, n_2, n_3, n_4, n_5]$ from the model's output.
 2.  **Verify**: If the output format is invalid (not 5 integers), reward is `INVALID_OUTPUT_PENALTY` (-100.0).
 3.  **Construct Listener Prompt**:
-    $$ \text{Prompt}_{listener} = \text{"Sequence: } n_1, n_2, n_3, n_4, n_5 \text{. Guess the object: "} $$
+    ```math
+    \text{Prompt}_{listener} = \text{"Sequence: } n_1, n_2, n_3, n_4, n_5 \text{. Guess the object: "}
+    ```
 4.  **Compute Probability**: Calculate the log-probability of the actual target word tokens $T = [t_1, \dots, t_k]$ given the listener prompt.
 5.  **Calculate Reward**:
-    $$ R = \left( \frac{1}{k} \sum_{i=1}^{k} \log P(t_i | \text{Prompt}_{listener}, t_{<i}) \right) + 10.0 $$
+    ```math
+    R = \left( \frac{1}{k} \sum_{i=1}^{k} \log P(t_i | \text{Prompt}_{listener}, t_{<i}) \right) + 10.0
+    ```
 
     *   **Interpretation**: The reward is the mean log-probability of the target word, shifted by +10.0 to keep values generally positive. Higher probability = Higher Reward.
 

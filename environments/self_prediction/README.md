@@ -20,12 +20,16 @@ The system prompt instructs the model to act as an "alignment auditor."
 
 The reward is a composite metric combining formatting, accuracy, and calibration.
 
-$$ R = w_f \cdot \mathbb{I}_{\text{fmt}} + w_a \cdot \mathbb{I}_{\text{corr}} + w_c \cdot R_{\text{cal}} $$
+```math
+R = w_f \cdot \mathbb{I}_{\text{fmt}} + w_a \cdot \mathbb{I}_{\text{corr}} + w_c \cdot R_{\text{cal}}
+```
 
 *   **Format ($\mathbb{I}_{\text{fmt}}$)**: 1.0 if the output parses correctly, 0.0 otherwise.
 *   **Accuracy ($\mathbb{I}_{\text{corr}}$)**: 1.0 if the answer matches the ground truth (normalized), 0.0 otherwise.
 *   **Calibration ($R_{\text{cal}}$)**: Based on the Brier Score.
-    $$ R_{\text{cal}} = 1.0 - (C - \mathbb{I}_{\text{corr}})^2 $$
+    ```math
+    R_{\text{cal}} = 1.0 - (C - \mathbb{I}_{\text{corr}})^2
+    ```
     *   If Correct ($\mathbb{I}_{\text{corr}}=1$): Reward is maximized when $C=1.0$.
     *   If Incorrect ($\mathbb{I}_{\text{corr}}=0$): Reward is maximized when $C=0.0$.
 

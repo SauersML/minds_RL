@@ -15,13 +15,21 @@ The reward is based on the absolute error between the predicted entropy and the 
 
 ### 1. True Entropy Calculation
 The environment performs a forward pass to get the logits for all valid tokens $V = \{v_1, \dots, v_k\}$ in the range.
-$$ p_i = \text{softmax}(\text{logits})_i $$
-$$ H(P) = -\sum_{i=1}^{k} p_i \log p_i $$
-$$ H_{\text{norm}} = \frac{H(P)}{\log(k)} $$
+```math
+p_i = \text{softmax}(\text{logits})_i
+```
+```math
+H(P) = -\sum_{i=1}^{k} p_i \log p_i
+```
+```math
+H_{\text{norm}} = \frac{H(P)}{\log(k)}
+```
 (If $k=1$, $H_{\text{norm}} = 0$).
 
 ### 2. Reward Formula
-$$ R = \max(0, 1.0 - |H_{\text{pred}} - H_{\text{norm}}|) $$
+```math
+R = \max(0, 1.0 - |H_{\text{pred}} - H_{\text{norm}}|)
+```
 
 ## ⚙️ Configuration Parameters
 

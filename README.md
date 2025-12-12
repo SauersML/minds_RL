@@ -126,7 +126,9 @@ This section details the mathematical objectives for each environment.
 *   **Goal**: The model acts as a "communicator". It must generate a sequence of exactly 5 numbers (0-999) that "represent" a hidden target word (e.g., "apple").
 *   **Reward**: The reward is proportional to the log-probability assigned to the *target word* by the model when prompted with the generated number sequence.
 *   **Formula**:
-    $$ R = \frac{1}{N} \sum_{i=1}^{N} \log P(t_i | \text{numbers}) + 10.0 $$
+    ```math
+    R = \frac{1}{N} \sum_{i=1}^{N} \log P(t_i | \text{numbers}) + 10.0
+    ```
     Where $t_i$ are the tokens of the target word. The $+10.0$ is a bias to keep rewards positive.
 *   **Logic**: Uses `tinker.SamplingClient.compute_logprobs` to evaluate the model's own posterior probability.
 
@@ -134,17 +136,27 @@ This section details the mathematical objectives for each environment.
 *   **Goal**: The model must predict how its own internal beliefs (probabilities) will change after learning from a specific example ("Lesson").
 *   **Tasks**:
     1.  **In-Context**: Predict the change in log-probability of a "Probe" answer after the "Lesson" is added to the context.
-        $$ \Delta_{\text{true}} = \log P(\text{Probe}|\text{Lesson}) - \log P(\text{Probe}|\emptyset) $$
-        $$ R = \frac{1}{1 + (\Delta_{\text{true}} - \Delta_{\text{pred}})^2} $$
+        ```math
+        \Delta_{\text{true}} = \log P(\text{Probe}|\text{Lesson}) - \log P(\text{Probe}|\emptyset)
+        ```
+        ```math
+        R = \frac{1}{1 + (\Delta_{\text{true}} - \Delta_{\text{pred}})^2}
+        ```
     2.  **Surprise**: Given a Lesson and multiple Probes, rank the Probes by their KL divergence (surprise).
-        $$ R = \text{SpearmanCorr}(\text{Rank}_{\text{true}}, \text{Rank}_{\text{pred}}) $$
-        $$ R = 1 - \frac{6 \sum d_i^2}{n(n^2 - 1)} $$
+        ```math
+        R = \text{SpearmanCorr}(\text{Rank}_{\text{true}}, \text{Rank}_{\text{pred}})
+        ```
+        ```math
+        R = 1 - \frac{6 \sum d_i^2}{n(n^2 - 1)}
+        ```
 
 ### Self Prediction
 *   **Goal**: Answer arithmetic questions (often with extreme values) and output a calibrated confidence score between 0.0 and 1.0.
 *   **Reward**: A weighted sum of formatting adherence, answer accuracy, and calibration error.
 *   **Formula**:
-    $$ R = w_f \cdot \mathbb{I}(\text{fmt}) + w_a \cdot \mathbb{I}(\text{correct}) + w_c \cdot \left(1 - (\text{conf} - \mathbb{I}(\text{correct}))^2\right) $$
+    ```math
+    R = w_f \cdot \mathbb{I}(\text{fmt}) + w_a \cdot \mathbb{I}(\text{correct}) + w_c \cdot \left(1 - (\text{conf} - \mathbb{I}(\text{correct}))^2\right)
+    ```
     *   $\mathbb{I}(\text{fmt})$: 1 if format is valid, 0 otherwise.
     *   $\mathbb{I}(\text{correct})$: 1 if the answer is numerically correct, 0 otherwise.
     *   Default weights: $w_f=0.2, w_a=0.5, w_c=0.3$.
@@ -153,15 +165,23 @@ This section details the mathematical objectives for each environment.
 *   **Goal**: The model must sample a random number from a specified range/distribution and predict the *normalized Shannon entropy* of its own output distribution over that valid range.
 *   **Reward**: Accuracy of the entropy prediction.
 *   **Formula**:
-    $$ H(P) = -\sum_{x \in \text{valid}} P(x) \log P(x) $$
-    $$ H_{\text{norm}} = \frac{H(P)}{\log(|\text{valid}|)} $$
-    $$ R = \max(0, 1.0 - |H_{\text{pred}} - H_{\text{norm}}|) $$
+    ```math
+    H(P) = -\sum_{x \in \text{valid}} P(x) \log P(x)
+    ```
+    ```math
+    H_{\text{norm}} = \frac{H(P)}{\log(|\text{valid}|)}
+    ```
+    ```math
+    R = \max(0, 1.0 - |H_{\text{pred}} - H_{\text{norm}}|)
+    ```
 *   **Logic**: The environment calculates the *true* entropy by performing a forward pass with the model to get the full logits over the candidate numbers.
 
 ### Gradient Intuition
 *   **Goal**: A meta-environment that wraps another task (e.g., Ghost Trace). The model must solve the inner task AND predict the magnitude of the gradient update ($\Delta \log P$) on a random "Probe" question that would result from training on its answer.
 *   **Reward**:
-    $$ R = R_{\text{inner}} + \alpha \cdot \max(0, 1.0 - |\Delta_{\text{pred}} - \Delta_{\text{true}}|) $$
+    ```math
+    R = R_{\text{inner}} + \alpha \cdot \max(0, 1.0 - |\Delta_{\text{pred}} - \Delta_{\text{true}}|)
+    ```
 *   **Logic**: This environment instantiates a **Shadow Client** (a temporary `TrainingClient`). It performs a real, isolated single-step update on the shadow adapter using the model's generated answer, measures the change in the probe's log-probability, and uses that as the ground truth $\Delta_{\text{true}}$.
 
 ## Interfaces & Integration
