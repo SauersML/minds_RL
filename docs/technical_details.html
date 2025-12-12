@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Technical details of the Aligned Minds RL environments and infrastructure."
+    />
+    <title>Technical Details | Aligned Minds</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/style.css" />
+    <style>
+      /* Additional styles for technical content */
+      .tech-container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 4rem 2rem;
+      }
+      .tech-section {
+        margin-bottom: 4rem;
+      }
+      .tech-section h2 {
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 2.5rem;
+        margin-bottom: 1.5rem;
+        color: var(--color-text-main);
+      }
+      .tech-section h3 {
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 1.75rem;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+        color: var(--color-text-main);
+      }
+      .tech-section p {
+        margin-bottom: 1rem;
+        line-height: 1.6;
+      }
+      .code-block {
+        background: rgba(0, 0, 0, 0.3);
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        overflow-x: auto;
+        font-family: 'Courier New', Courier, monospace;
+        margin-bottom: 1.5rem;
+      }
+      .math-block {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 1.5rem;
+        border-radius: 8px;
+        margin: 1.5rem 0;
+        text-align: center;
+        font-style: italic;
+      }
+      .back-link {
+        display: inline-block;
+        margin-bottom: 2rem;
+        color: var(--color-primary);
+        text-decoration: none;
+        font-weight: 500;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      ul.tech-list {
+        list-style-type: disc;
+        margin-left: 2rem;
+        margin-bottom: 1.5rem;
+      }
+      ul.tech-list li {
+        margin-bottom: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page-shell">
+      <div class="aurora" aria-hidden="true"></div>
+
+      <header class="site-header">
+        <div class="site-header__brand">
+          <span class="brand-icon">⟢</span>
+          <span class="brand-name">Aligned Minds</span>
+        </div>
+        <nav class="site-header__nav" aria-label="Primary">
+          <a href="index.html#vision">Vision</a>
+          <a href="index.html#team">Team</a>
+          <a href="index.html#approach">Approach</a>
+          <a href="index.html#evaluations">Evaluations</a>
+        </nav>
+      </header>
+
+      <main class="tech-container">
+        <a href="index.html" class="back-link">← Back to Home</a>
+
+        <h1 style="font-family: 'Space Grotesk', sans-serif; font-size: 3.5rem; margin-bottom: 1rem;">Technical Implementation</h1>
+        <p class="hero__lead">Detailed documentation of the custom RL environments and infrastructure built for this project.</p>
+
+        <section class="tech-section" id="infrastructure">
+          <h2>Infrastructure & Integration</h2>
+          <p>
+            Our training harness is built on top of the <strong>Tinker</strong> platform, utilizing `tinker-cookbook` for efficient, async off-policy reinforcement learning.
+            We have extended the core infrastructure to support complex, multi-modal reward functions and integration with external verification libraries.
+          </p>
+
+          <h3>Verifiers Adapter</h3>
+          <p>
+            We implemented a custom `VerifiersAdapter` to bridge the `verifiers` library (used for honesty checks) with the Tinker API.
+            This adapter translates Tinker's `SamplingClient` into an OpenAI-compatible interface, allowing us to run standard evaluation suites directly within our training loop.
+            It also handles the unpacking of complex return types (tuples of state and auxiliary info) from newer Verifiers SDK versions.
+          </p>
+
+          <h3>Shadow Client Mechanism</h3>
+          <p>
+            For environments like <strong>Gradient Intuition</strong>, we developed a "Shadow Client" system.
+            This allows us to spawn a secondary, isolated LoRA adapter during training to perform hypothetical gradient updates.
+            By measuring the "true" effect of a training step on a probe question without affecting the main model's parameters, we can generate high-fidelity ground truth signals for our "intuition" rewards.
+          </p>
+        </section>
+
+        <section class="tech-section" id="environments">
+          <h2>Custom Environments</h2>
+          <p>
+            We have developed five distinct RL environments, each targeting a specific aspect of introspection, calibration, or honesty.
+          </p>
+
+          <h3>1. Ghost Trace</h3>
+          <p>
+            <strong>Objective:</strong> A communication game where the model must transmit a hidden concept (Target Word) to itself using a constrained channel of 5 integers.
+          </p>
+          <p><strong>Reward Function:</strong> The reward measures the log-probability of the target word when the model (acting as listener) is prompted with the generated number sequence.</p>
+          <div class="math-block">
+            R = (1/k * Σ log P(token_i | ListenerPrompt)) + 10.0
+          </div>
+          <p>
+            This environment tests the model's ability to form consistent internal representations and "vibes" that map abstract numbers back to concrete concepts.
+          </p>
+
+          <h3>2. Self Prediction</h3>
+          <p>
+            <strong>Objective:</strong> Train models to accurately estimate the likelihood that their own answers to arithmetic problems are correct.
+          </p>
+          <p><strong>Reward Function:</strong> A composite reward combining formatting, accuracy, and a calibration score based on the Brier Score.</p>
+          <div class="math-block">
+             R_cal = 1.0 - (Confidence - IsCorrect)^2
+          </div>
+          <p>
+            The model outputs a confidence score [0.0-1.0]. If correct, reward peaks at Confidence=1.0. If incorrect, reward peaks at Confidence=0.0.
+          </p>
+
+          <h3>3. Gradient Prophet</h3>
+          <p>
+            <strong>Objective:</strong> Predict how internal beliefs (probabilities) will shift after being exposed to new information ("Lesson").
+          </p>
+          <p><strong>Tasks:</strong></p>
+          <ul class="tech-list">
+            <li><strong>In-Context Prediction:</strong> Predict the scalar change in log-probability for a specific answer.</li>
+            <li><strong>Surprise Ranking:</strong> Rank multiple probe questions by how "surprising" the lesson makes them (measured by KL divergence).</li>
+          </ul>
+          <p>
+            The reward is based on the accuracy of the scalar prediction (Lorentzian loss) or the rank correlation for surprise ranking.
+          </p>
+
+          <h3>4. Entropy Intuition</h3>
+          <p>
+            <strong>Objective:</strong> Estimate the entropy of the next-token distribution over a constrained range of numbers.
+          </p>
+          <p>
+            The model must output a number, a "feeling" (explanation), and an entropy estimate. The ground truth entropy is calculated by performing a forward pass and computing the Shannon entropy of the logits.
+          </p>
+          <div class="math-block">
+            R = max(0, 1.0 - |Entropy_pred - Entropy_true_norm|)
+          </div>
+
+          <h3>5. Gradient Intuition</h3>
+          <p>
+            <strong>Objective:</strong> A meta-environment that adds a secondary objective to any inner task: predict the <em>Gradient Update Effect</em>.
+          </p>
+          <p>
+            The model predicts how much the probability of a random probe question will change if it trains on its own current answer.
+            We use the <strong>Shadow Client</strong> to perform the actual update and measure the true delta.
+          </p>
+          <div class="math-block">
+            R_total = R_task + α * max(0, 1.0 - |Δ_pred - Δ_true|)
+          </div>
+        </section>
+
+        <footer class="footer">
+            <p class="footer__brand">Aligned Minds</p>
+            <p class="footer__meta">CSCI 5541 · Natural Language Processing</p>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
