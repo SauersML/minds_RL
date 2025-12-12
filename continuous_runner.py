@@ -10,14 +10,19 @@ from tinker_cookbook.rl import train
 from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersRLDatasetBuilder
 
 from rl_config import RunnerConfig
+from verifiers_adapter import make_custom_do_group_rollout
 
 
 async def _run_config(cfg: train.Config) -> None:
     if isinstance(cfg.dataset_builder, VerifiersRLDatasetBuilder):
-        from tinker_cookbook.recipes.verifiers_rl import train as verifiers_train
-
         original_do_group_rollout = train.do_group_rollout
-        train.do_group_rollout = verifiers_train.custom_do_group_rollout
+        group_size = getattr(cfg.dataset_builder, "group_size", 1)
+        rollout_fn = make_custom_do_group_rollout(
+            cfg,
+            group_size=group_size,
+        )
+
+        train.do_group_rollout = rollout_fn
         try:
             await train.main(cfg)
         finally:

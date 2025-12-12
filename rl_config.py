@@ -90,13 +90,18 @@ def _build_dataset_builder(
 
     dataset_n = env_args.get("num_examples", -1)
     dataset_seed = env_args.get("seed")
-    return VerifiersRLDatasetBuilder(
+    builder = VerifiersRLDatasetBuilder(
         vf_env_id=env_id,
         vf_env_args=env_args,
         groups_per_batch=batch_size,
         dataset_n=dataset_n,
         dataset_seed=dataset_seed,
     )
+
+    # Track group_size on the builder so verifiers rollouts can respect
+    # rollouts_per_example during the monkey-patched execution path.
+    builder.group_size = group_size  # type: ignore[attr-defined]
+    return builder
 
 
 @dataclass
