@@ -7,3 +7,18 @@ build/
 Gemfile.lock
 *.pyc
 __pycache__/
+
+# Large model artifacts
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.h5
+*.ckpt
+
+# Local wandb
+wandb/
+
+# Training state - Explicitly allow these
+!run_state.json
+!outputs/
