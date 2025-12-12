@@ -384,7 +384,7 @@ class GradientProphetEnv(Env):
             episode_done=True,
             next_observation=tinker.ModelInput.from_ints([]),
             next_stop_condition=[],
-            metrics={"task": self.sample.get("task", "")},
+            metrics={},
         )
 
     async def _evaluate_reward(self, action: Any) -> float:
