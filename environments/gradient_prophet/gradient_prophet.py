@@ -345,7 +345,7 @@ class GradientProphetEnv(Env):
                 pass
         return tinker.ModelInput.from_ints([]), list(stop_seqs)
 
-    def initial_observation(self) -> tuple[tinker.ModelInput, list[int]]:
+    async def initial_observation(self) -> tuple[tinker.ModelInput, list[int]]:
         return self._render_prompt()
 
     async def step(self, action: Any) -> StepResult:  # type: ignore[override]
