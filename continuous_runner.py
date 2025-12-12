@@ -7,10 +7,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import torch
 from tinker_cookbook import checkpoint_utils
-from tinker_cookbook.rl import data_processing, train
-from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersRLDatasetBuilder, VerifiersEnvGroupBuilder
+from tinker_cookbook.rl import train
+from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder
 
 from rl_config import RunnerConfig
 from verifiers_adapter import make_custom_do_group_rollout
