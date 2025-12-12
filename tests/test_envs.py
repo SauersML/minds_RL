@@ -77,7 +77,7 @@ async def test_single_env(env_path: Path):
     # 1. Create a temporary config file
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".toml", delete=False) as tmp:
         config_content = CONFIG_TEMPLATE.format(
-            env_id=f"./environments/{env_name}",
+            env_id=env_name,
             base_model=TINKER_MODEL
         )
         tmp.write(config_content)
