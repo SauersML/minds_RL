@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersRLDatasetBuilder
+from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.rl.train import AsyncConfig, Config, StreamMinibatchConfig
+from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 from environments.rl_datasets import (
     GradientIntuitionRLDatasetBuilder,
@@ -22,9 +24,16 @@ def _ensure_api_key(config: Mapping[str, Any]) -> None:
         raise ValueError(f"Missing Tinker API key in environment variable {api_key_env}")
 
 
-def _groups_per_batch(trainer_cfg: Mapping[str, Any]) -> int:
+def _group_size(trainer_cfg: Mapping[str, Any]) -> int:
     try:
         return max(1, int(trainer_cfg.get("rollouts_per_example", 4)))
+    except Exception:
+        return 4
+
+
+def _batch_size(trainer_cfg: Mapping[str, Any]) -> int:
+    try:
+        return max(1, int(trainer_cfg.get("groups_per_batch", trainer_cfg.get("batch_size", 4))))
     except Exception:
         return 4
 
@@ -45,8 +54,10 @@ def _loss_fn(trainer_cfg: Mapping[str, Any]) -> str:
 def _build_dataset_builder(
     env_cfg: Mapping[str, Any],
     model_name: str,
-    groups_per_batch: int,
     *,
+    batch_size: int,
+    group_size: int,
+    renderer: Any,
     base_url: str | None,
 ) -> VerifiersRLDatasetBuilder | GradientProphetRLDatasetBuilder | GradientIntuitionRLDatasetBuilder:
     env_id = str(env_cfg.get("id", "")).strip()
@@ -55,7 +66,9 @@ def _build_dataset_builder(
     if env_id.endswith("gradient_prophet") or "gradient_prophet" in env_id:
         return GradientProphetRLDatasetBuilder(
             model_name=model_name,
-            groups_per_batch=groups_per_batch,
+            batch_size=batch_size,
+            group_size=group_size,
+            renderer=renderer,
             base_url=base_url,
             seed=env_args.get("seed"),
         )
@@ -69,7 +82,9 @@ def _build_dataset_builder(
             seed=env_args.get("seed"),
             shadow_rank=int(env_args.get("shadow_rank", 8)),
             shadow_learning_rate=float(env_args.get("shadow_learning_rate", 1e-4)),
-            groups_per_batch=groups_per_batch,
+            batch_size=batch_size,
+            group_size=group_size,
+            renderer=renderer,
             base_url=base_url,
         )
 
@@ -78,7 +93,7 @@ def _build_dataset_builder(
     return VerifiersRLDatasetBuilder(
         vf_env_id=env_id,
         vf_env_args=env_args,
-        groups_per_batch=groups_per_batch,
+        groups_per_batch=batch_size,
         dataset_n=dataset_n,
         dataset_seed=dataset_seed,
     )
@@ -104,14 +119,27 @@ class RunnerConfig:
         if not base_model:
             raise ValueError("model.base_model must be set in the config")
 
-        groups = _groups_per_batch(trainer_cfg)
-        dataset_builder = _build_dataset_builder(env_cfg, base_model, groups_per_batch=groups, base_url=self.base_url)
+        group_size = _group_size(trainer_cfg)
+        batch_size = _batch_size(trainer_cfg)
+
+        tokenizer = get_tokenizer(base_model)
+        renderer_name = str(model_cfg.get("renderer_name", model_cfg.get("renderer", "role_colon")))
+        renderer = get_renderer(renderer_name, tokenizer)
+
+        dataset_builder = _build_dataset_builder(
+            env_cfg,
+            base_model,
+            batch_size=batch_size,
+            group_size=group_size,
+            renderer=renderer,
+            base_url=self.base_url,
+        )
 
         log_path = self.log_root / Path(self.config_path).stem
         log_path.mkdir(parents=True, exist_ok=True)
 
-        async_config = AsyncConfig(max_steps_off_policy=self.async_off_policy_steps, groups_per_batch=groups)
-        stream_cfg = StreamMinibatchConfig(groups_per_batch=groups, num_minibatches=self.stream_minibatches)
+        async_config = AsyncConfig(max_steps_off_policy=self.async_off_policy_steps, groups_per_batch=batch_size)
+        stream_cfg = StreamMinibatchConfig(groups_per_batch=batch_size, num_minibatches=self.stream_minibatches)
 
         return Config(
             learning_rate=float(trainer_cfg.get("learning_rate", 3.162e-6)),

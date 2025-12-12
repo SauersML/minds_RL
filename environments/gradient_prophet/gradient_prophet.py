@@ -317,7 +317,7 @@ def _kl_from_distributions(prior: dict[str, float], post: dict[str, float]) -> f
 class GradientProphetEnv(Env):
     """Native Tinker-style environment that queries logprobs during reward."""
 
-    def __init__(self, sample: Mapping[str, Any], sampling_client: Any) -> None:
+    def __init__(self, sample: Mapping[str, Any], sampling_client: Any, *, renderer: Any, seed: int | None = None) -> None:
         self.sample = dict(sample)
         self.sample.setdefault("task", "in_context")
         if self.sample["task"] == "in_context":
@@ -326,9 +326,27 @@ class GradientProphetEnv(Env):
         self.sample["prompt"] = _build_prompt(self.sample)
         self.parser = ProphetParser()
         self.sampling_client = sampling_client
+        self.renderer = renderer
+        self.rng = random.Random(seed)
 
-    def initial_observation(self) -> str:
-        return str(self.sample.get("prompt", ""))
+    def _render_prompt(self) -> tuple[tinker.ModelInput, list[int]]:
+        prompt = str(self.sample.get("prompt", ""))
+        messages = [{"role": "user", "content": prompt}]
+        rendered = getattr(self.renderer, "build_generation_prompt", None)
+        if callable(rendered):
+            return rendered(messages)  # type: ignore[return-value]
+        stop_seqs = getattr(self.renderer, "get_stop_sequences", lambda *_: [])([])
+        tokenizer = getattr(self.renderer, "tokenizer", None)
+        if tokenizer is not None and hasattr(tokenizer, "encode"):
+            try:
+                token_ids = tokenizer.encode(prompt)
+                return tinker.ModelInput.from_ints(token_ids), list(stop_seqs)
+            except Exception:
+                pass
+        return tinker.ModelInput.from_ints([]), list(stop_seqs)
+
+    def initial_observation(self) -> tuple[tinker.ModelInput, list[int]]:
+        return self._render_prompt()
 
     async def step(self, action: Any) -> StepResult:  # type: ignore[override]
         reward = await self._evaluate_reward(action)

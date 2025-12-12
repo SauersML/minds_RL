@@ -7,8 +7,24 @@ import time
 from pathlib import Path
 
 from tinker_cookbook.rl import train
+from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersRLDatasetBuilder
 
 from rl_config import RunnerConfig
+
+
+async def _run_config(cfg: train.Config) -> None:
+    if isinstance(cfg.dataset_builder, VerifiersRLDatasetBuilder):
+        from tinker_cookbook.recipes.verifiers_rl import train as verifiers_train
+
+        original_do_group_rollout = train.do_group_rollout
+        train.do_group_rollout = verifiers_train.custom_do_group_rollout
+        try:
+            await train.main(cfg)
+        finally:
+            train.do_group_rollout = original_do_group_rollout
+        return
+
+    await train.main(cfg)
 
 
 def main() -> None:
@@ -50,7 +66,7 @@ def main() -> None:
         # Respect the time budget by breaking early if the next run would exceed it.
         if time.time() >= deadline:
             break
-        asyncio.run(train.main(cfg))
+        asyncio.run(_run_config(cfg))
 
 
 if __name__ == "__main__":

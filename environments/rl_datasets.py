@@ -13,36 +13,51 @@ from environments.gradient_prophet.gradient_prophet import GradientProphetDatase
 
 
 class _SingleEnvGroupBuilder(EnvGroupBuilder):
-    def __init__(self, factory: Callable[[], Env], *, tags: Sequence[str] | None = None) -> None:
+    def __init__(
+        self, factory: Callable[[], Env], *, group_size: int, tags: Sequence[str] | None = None
+    ) -> None:
         self._factory = factory
+        self._group_size = max(1, int(group_size))
         self._tags = list(tags or [])
 
     async def make_envs(self) -> Sequence[Env]:  # type: ignore[override]
-        return [self._factory()]
+        return [self._factory() for _ in range(self._group_size)]
 
     def logging_tags(self) -> list[str]:
         return list(self._tags)
 
 
 class _StaticEnvDataset(RLDataset):
-    def __init__(self, factories: Sequence[Callable[[], Env]], groups_per_batch: int) -> None:
+    def __init__(
+        self,
+        factories: Sequence[Callable[[], Env]],
+        *,
+        batch_size: int,
+        group_size: int,
+    ) -> None:
         self._factories = list(factories)
-        self._groups_per_batch = max(1, int(groups_per_batch))
+        self._batch_size = max(1, int(batch_size))
+        self._group_size = max(1, int(group_size))
 
     def __len__(self) -> int:  # type: ignore[override]
-        return (len(self._factories) + self._groups_per_batch - 1) // self._groups_per_batch
+        return (len(self._factories) + self._batch_size - 1) // self._batch_size
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:  # type: ignore[override]
-        start = index * self._groups_per_batch
-        end = min(len(self._factories), start + self._groups_per_batch)
+        start = index * self._batch_size
+        end = min(len(self._factories), start + self._batch_size)
         batch_factories = self._factories[start:end]
-        return [_SingleEnvGroupBuilder(factory) for factory in batch_factories]
+        return [
+            _SingleEnvGroupBuilder(factory, group_size=self._group_size)
+            for factory in batch_factories
+        ]
 
 
 @dataclass
 class GradientProphetRLDatasetBuilder(RLDatasetBuilder):
     model_name: str
-    groups_per_batch: int
+    batch_size: int
+    group_size: int
+    renderer: Any
     base_url: str | None = None
     seed: int | None = None
 
@@ -54,10 +69,19 @@ class GradientProphetRLDatasetBuilder(RLDatasetBuilder):
         envs = dataset_builder.build(sampling_client)
 
         factories = [
-            (lambda sample=env.sample: GradientProphetEnv(sample, sampling_client))
+            (
+                lambda sample=env.sample, seed=self.seed: GradientProphetEnv(
+                    sample,
+                    sampling_client,
+                    renderer=self.renderer,
+                    seed=seed,
+                )
+            )
             for env in envs
         ]
-        dataset = _StaticEnvDataset(factories, self.groups_per_batch)
+        dataset = _StaticEnvDataset(
+            factories, batch_size=self.batch_size, group_size=self.group_size
+        )
         return dataset, None
 
 
@@ -66,7 +90,9 @@ class GradientIntuitionRLDatasetBuilder(RLDatasetBuilder):
     model_name: str
     inner_env_id: str
     inner_env_args: Mapping[str, Any]
-    groups_per_batch: int
+    batch_size: int
+    group_size: int
+    renderer: Any
     base_url: str | None = None
     alpha: float = 0.3
     seed: int | None = None
@@ -82,6 +108,7 @@ class GradientIntuitionRLDatasetBuilder(RLDatasetBuilder):
             seed=self.seed,
             shadow_rank=self.shadow_rank,
             shadow_learning_rate=self.shadow_learning_rate,
+            renderer=self.renderer,
         )
 
         envs = builder.build(
@@ -92,28 +119,37 @@ class GradientIntuitionRLDatasetBuilder(RLDatasetBuilder):
         )
 
         if not envs:
-            return _StaticEnvDataset([], self.groups_per_batch), None
+            return _StaticEnvDataset([], batch_size=self.batch_size, group_size=self.group_size), None
 
-        # Repeat environments if the dataset is smaller than a batch so batches are fully populated.
         env_count = len(envs)
-        if env_count < self.groups_per_batch:
-            envs = list(itertools.islice(itertools.cycle(envs), self.groups_per_batch))
-            env_count = len(envs)
+        if env_count < self.batch_size:
+            envs = list(itertools.islice(itertools.cycle(envs), self.batch_size))
 
         factories: list[Callable[[], Env]] = []
         for idx, _ in enumerate(envs):
-            def _factory(i: int = idx) -> Env:
+            env_seed = (self.seed or 0) + idx
+
+            def _factory(i: int = idx, seed_val: int = env_seed) -> Env:
                 rebuilt = builder.build(
                     sampling_client=None,
                     service_client=shadow_service_client,
                     base_model=self.model_name,
                     training_client=None,
                 )
-                return rebuilt[i % len(rebuilt)]
+                env = rebuilt[i % len(rebuilt)]
+                if hasattr(env, "rng"):
+                    try:
+                        env.rng.seed(seed_val)
+                    except Exception:
+                        pass
+                env.renderer = self.renderer  # type: ignore[attr-defined]
+                return env
 
             factories.append(_factory)
 
-        dataset = _StaticEnvDataset(factories, self.groups_per_batch)
+        dataset = _StaticEnvDataset(
+            factories, batch_size=self.batch_size, group_size=self.group_size
+        )
         return dataset, None
 
 
