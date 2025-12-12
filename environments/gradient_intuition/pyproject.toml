@@ -12,8 +12,5 @@ dependencies = [
   "numpy",
 ]
 
-[tool.hatch.build]
-include = ["gradient_intuition.py", "probes.py", "__init__.py"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["gradient_intuition"]

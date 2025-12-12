@@ -10,8 +10,5 @@ dependencies = [
   "verifiers",
 ]
 
-[tool.hatch.build]
-include = ["ghost_trace.py", "__init__.py"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["ghost_trace"]

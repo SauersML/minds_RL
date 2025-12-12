@@ -13,8 +13,5 @@ dependencies = [
   "peft",
 ]
 
-[tool.hatch.build]
-include = ["gradient_prophet.py", "__init__.py"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["gradient_prophet"]
