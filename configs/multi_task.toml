@@ -37,3 +37,13 @@ name = "gradient_intuition"
 id = "./environments/gradient_intuition"
 weight = 0.1
 args = { inner_env_id = "./environments/ghost_trace", alpha = 0.35, shadow_rank = 8, shadow_learning_rate = 1e-4 }
+
+[[envs]]
+name = "eval_math_static"
+id = "./evals/eval_math_static"
+weight = 0.0
+
+[[envs]]
+name = "eval_ghost_static"
+id = "./evals/eval_ghost_static"
+weight = 0.0
