@@ -36,9 +36,4 @@ weight = 0.23
 name = "gradient_intuition"
 id = "./environments/gradient_intuition"
 weight = 0.1
-
-  [envs.args]
-  inner_env_id = "./environments/ghost_trace"
-  alpha = 0.35
-  shadow_rank = 8
-  shadow_learning_rate = 1e-4
+args = { inner_env_id = "./environments/ghost_trace", alpha = 0.35, shadow_rank = 8, shadow_learning_rate = 1e-4 }
