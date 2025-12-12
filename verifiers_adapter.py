@@ -279,11 +279,16 @@ def make_custom_do_group_rollout(
             )
             local_client.set_generation_hook(hook)
 
+            # Inject runtime objects into info so environments can perform model-based scoring
+            current_info = dict(vf_builder.info) if vf_builder.info else {}
+            current_info["tinker_client"] = sampling_client
+            current_info["tokenizer"] = local_tokenizer
+
             rollout_input: vf.RolloutInput = {
                 "prompt": vf_builder.prompt,
                 "answer": vf_builder.answer,
                 "task": vf_builder.task,
-                "info": vf_builder.info,
+                "info": current_info,
                 "example_id": 0,
             }
 
