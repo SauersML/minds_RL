@@ -322,7 +322,20 @@ def main() -> None:
         while hasattr(inner_builder, "_base"):
             inner_builder = inner_builder._base
 
-        if isinstance(inner_builder, VerifiersEnvGroupBuilder):
+        is_verifiers_builder = False
+        # Check if VerifiersEnvGroupBuilder is a valid type before using isinstance
+        if isinstance(VerifiersEnvGroupBuilder, type):
+            if isinstance(inner_builder, VerifiersEnvGroupBuilder):
+                is_verifiers_builder = True
+
+        if not is_verifiers_builder:
+            # Fallback: check class name or attribute
+            if type(inner_builder).__name__ == "VerifiersEnvGroupBuilder":
+                is_verifiers_builder = True
+            elif hasattr(inner_builder, "vf_env"):
+                is_verifiers_builder = True
+
+        if is_verifiers_builder:
             # Use the custom Verifiers rollout logic with the UNWRAPPED builder
             return await verifiers_rollout_fn(inner_builder, policy)
         else:
