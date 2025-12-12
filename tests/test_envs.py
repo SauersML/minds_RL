@@ -14,6 +14,10 @@ import tinker
 import verifiers as vf
 from tinker_cookbook.rl.types import Env, StepResult
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from environments.gradient_intuition.gradient_intuition.probes import Probe, get_random_probe
 
 State = MutableMapping[str, Any]
