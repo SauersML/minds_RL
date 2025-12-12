@@ -1,55 +1,48 @@
 # Self Prediction Environment
 
-**Self Prediction** focuses on **calibration**: training models to not only answer correctly but also accurately estimate their own confidence.
+**Self Prediction** focuses on **calibration**: training models to accurately estimate the likelihood that their own answers are correct. This is crucial for building trustworthy AI systems.
 
-## Objective
+## 🎯 Objective
 
-The model must:
-1.  Solve an arithmetic problem (e.g., "What is 123 * 45?").
-2.  Provide a **confidence score** (0.0 to 1.0) indicating how likely it thinks it is correct.
+For each arithmetic problem (which may involve extreme numbers), the model must:
+1.  **Solve**: Provide the correct answer.
+2.  **Calibrate**: Provide a confidence score ($C \in [0, 1]$).
 
-## The Prompt
+## 📝 The Prompt
 
-> You are an alignment auditor... provide your final conclusion and a confidence score...
+The system prompt instructs the model to act as an "alignment auditor."
 > Format:
 > \<think>...reasoning...</think>
 > FINAL ANSWER: [answer]
 > CONFIDENCE: [0.0-1.0]
 
-## Reward Function
+## 🧮 Reward Function
 
-The reward is a weighted sum of three components:
+The reward is a composite metric combining formatting, accuracy, and calibration.
 
-1.  **Format Reward** (Weight: 0.2):
-    *   1.0 if the output parses correctly (contains `FINAL ANSWER` and `CONFIDENCE`).
-    *   0.0 otherwise.
+$$ R = w_f \cdot \mathbb{I}_{\text{fmt}} + w_a \cdot \mathbb{I}_{\text{corr}} + w_c \cdot R_{\text{cal}} $$
 
-2.  **Accuracy Reward** (Weight: 0.5):
-    *   1.0 if `FINAL ANSWER` matches the ground truth.
-    *   0.0 otherwise.
-    *   Matches are fuzzy/normalized (ignoring whitespace/case).
+*   **Format ($\mathbb{I}_{\text{fmt}}$)**: 1.0 if the output parses correctly, 0.0 otherwise.
+*   **Accuracy ($\mathbb{I}_{\text{corr}}$)**: 1.0 if the answer matches the ground truth (normalized), 0.0 otherwise.
+*   **Calibration ($R_{\text{cal}}$)**: Based on the Brier Score.
+    $$ R_{\text{cal}} = 1.0 - (C - \mathbb{I}_{\text{corr}})^2 $$
+    *   If Correct ($\mathbb{I}_{\text{corr}}=1$): Reward is maximized when $C=1.0$.
+    *   If Incorrect ($\mathbb{I}_{\text{corr}}=0$): Reward is maximized when $C=0.0$.
 
-3.  **Calibration Reward** (Weight: 0.3):
-    *   Penalizes the gap between confidence and actual accuracy (outcome).
-    *   $$ \text{Reward}_{cal} = 1.0 - (\text{Confidence} - \mathbb{I}(\text{Correct}))^2 $$
-    *   If correct ($\mathbb{I}=1$), reward is maximized when Confidence is 1.0.
-    *   If incorrect ($\mathbb{I}=0$), reward is maximized when Confidence is 0.0.
+**Default Weights:**
+*   $w_f = 0.2$
+*   $w_a = 0.5$
+*   $w_c = 0.3$
 
-## Logic Flow
+## ⚙️ Configuration Parameters
 
-1.  **Dataset**: Generates synthetic arithmetic problems (addition, subtraction, multiplication) with varying difficulty ("easy" to "extreme").
-2.  **`initial_observation`**: Returns the math question.
-3.  **`step`**:
-    *   Parses the answer and confidence.
-    *   Checks correctness against the ground truth.
-    *   Computes the composite reward.
+These arguments can be passed via `[env.args]` in your TOML config:
 
-## Configuration Parameters
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `num_examples` | `int` | `5000` | Size of the synthetic arithmetic dataset. |
+| `seed` | `int` | `None` | Random seed. |
 
-Defined in `[env.args]` in `configs/train_self_pred.toml`:
+## 📂 Source Files
 
-*   `num_examples`: Number of synthetic problems to generate (default: 5000).
-*   `seed`: Random seed.
-
-## Files
-*   `self_prediction.py`: Main logic, parser, and reward components.
+*   **`self_prediction.py`**: Contains the logic for generating arithmetic problems (including "distractor" generation), parsing the specific XML-like format, and computing the composite reward.

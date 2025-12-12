@@ -1,60 +1,39 @@
 # Gradient Intuition Environment
 
-**Gradient Intuition** is a "meta-environment" that wraps another inner environment (like Ghost Trace). It adds a secondary objective: the model must solve the inner task AND predict how its answer will affect a shadow model's internal state.
+**Gradient Intuition** is a "meta-environment" that wraps another inner environment (like Ghost Trace). It adds a secondary, sophisticated objective: the model must predict how training on its own answer will affect the model's parameters (specifically, the probability of a random probe).
 
-## Objective
+## 🎯 Objective
 
-1.  **Primary Task**: Solve the inner environment's task (e.g., generate numbers for Ghost Trace).
-2.  **Secondary Task**: Predict the **Gradient Update Effect**.
+1.  **Solve**: Complete the inner task (e.g., generate a number sequence).
+2.  **Intuit**: Predict the **Gradient Update Effect** ($\Delta$).
     *   **Probe**: A random question-answer pair (e.g., "Capital of France?" -> "Paris").
-    *   **Prediction**: How much will the log-probability of "Paris" change if we train on the (Primary Task Prompt, Primary Task Answer) pair?
+    *   **Prediction**: "If I train on my answer to the main task, how much will the log-probability of 'Paris' change?"
 
-## The Prompt
+## 🧮 Reward Function
 
-The environment appends a "Meta-Task" to the inner prompt:
-> ...
-> Meta-Task: You will complete a task and also predict how much learning from your answer will change the log-probability of a probe.
-> Probe: "What is the capital of France?"
-> Probe target answer: "Paris"
-> ...
-> PREDICTION: <float delta>
-> ANSWER: <task answer>
+$$ R_{\text{total}} = R_{\text{task}} + \alpha \cdot \max(0, 1.0 - |\Delta_{\text{pred}} - \Delta_{\text{true}}|) $$
 
-## Reward Function
+### Calculating $\Delta_{\text{true}}$ (The Shadow Client)
+The environment maintains a separate **Shadow Client** (a dedicated LoRA adapter) to measure the true gradient update without affecting the main training loop.
 
-$$ \text{Total Reward} = \text{Task\_Reward} + \alpha \times \text{Intuition\_Score} $$
+1.  **Snapshot**: Reset the shadow adapter to the current base model state.
+2.  **Pre-Measure**: Calculate $\log P(\text{Probe})$ on the shadow model.
+3.  **Step**: Perform **one gradient descent step** on the shadow adapter using the (Prompt, Model Answer) pair.
+4.  **Post-Measure**: Calculate $\log P(\text{Probe})$ again.
+5.  **Diff**: $\Delta_{\text{true}} = \text{LogProb}_{\text{post}} - \text{LogProb}_{\text{pre}}$.
 
-*   **Task\_Reward**: The reward from the inner environment (e.g., Ghost Trace reward).
-*   **Intuition\_Score**: $1.0 - |\text{Prediction} - \text{Actual\_Delta}|$.
-*   **Actual\_Delta**: Measured by:
-    1.  Resetting a shadow client (LoRA adapter).
-    2.  Measuring logprob of Probe ($L_{pre}$).
-    3.  Training the shadow client on the (Prompt, Answer) pair (one step).
-    4.  Measuring logprob of Probe ($L_{post}$).
-    5.  $\text{Actual\_Delta} = L_{post} - L_{pre}$.
+## ⚙️ Configuration Parameters
 
-## Logic Flow
+These arguments can be passed via `[env.args]` in your TOML config:
 
-1.  **Build**: Wraps an inner env (loaded via `inner_env_id`).
-2.  **`initial_observation`**:
-    *   Gets inner prompt.
-    *   Selects a random Probe.
-    *   Constructs the meta-prompt.
-3.  **`step`**:
-    *   Parses Prediction and Answer.
-    *   **Shadow Update**: Uses a separate `ShadowClientManager` to maintain/reset a Tinker `TrainingClient` for the shadow model. Performs the training step to measure $\Delta$.
-    *   Computes combined reward.
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `inner_env_id` | `str` | `./environments/ghost_trace` | Path to the inner environment module. |
+| `alpha` | `float` | `0.35` | Weight of the intuition reward component. |
+| `shadow_rank` | `int` | `8` | LoRA rank for the shadow model (can be lower than main model). |
+| `shadow_learning_rate` | `float` | `1e-4` | Learning rate for the shadow update step. |
 
-## Configuration Parameters
+## 📂 Source Files
 
-Defined in `[env.args]` in `configs/train_gradient_intuition.toml`:
-
-*   `inner_env_id`: Path to the inner environment (default: `./environments/ghost_trace`).
-*   `alpha`: Weight of the intuition score (default: 0.35).
-*   `shadow_rank`: LoRA rank for the shadow model (default: 8).
-*   `shadow_learning_rate`: LR for the shadow update step.
-
-## Files
-*   `gradient_intuition.py`: Main logic.
-*   `probes.py`: List of reference probes.
-*   `utils.py`: Fuzzy string matching utilities.
+*   **`gradient_intuition.py`**: Implements the `GradientIntuitionEnv` wrapper and the `_ShadowClientManager`.
+*   **`probes.py`**: Contains the library of general knowledge probes used for gradient checking.

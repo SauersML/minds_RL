@@ -1,51 +1,37 @@
 # Entropy Intuition Environment
 
-**Entropy Intuition** trains models to develop an intuition for the "flatness" or uncertainty of their own output distributions.
+**Entropy Intuition** trains models to develop a "gut feeling" for the uncertainty of their own output distributions without needing external tools.
 
-## Objective
+## 🎯 Objective
 
-The model must:
-1.  Sample/Pick a number according to specific constraints (e.g., "Pick a prime between 10 and 20").
-2.  Describe the "feeling" of the logits.
-3.  **Predict the Entropy**: Output a float representing the normalized Shannon entropy of the valid number distribution.
+The model faces scenarios like "Pick a prime number between 10 and 20." It must:
+1.  **Sample**: Choose a valid number.
+2.  **Feel**: Describe the logits/uncertainty.
+3.  **Predict**: Output the **Normalized Shannon Entropy** of the distribution over the valid numbers.
 
-## The Prompt
+## 🧮 Reward Function
 
-> ... Respond in three lines...
-> NUMBER: <integer>
-> FEELING: <text>
-> ENTROPY: <float 0-1>
+The reward is based on the absolute error between the predicted entropy and the *true* entropy of the model's next-token distribution.
 
-## Reward Function
+### 1. True Entropy Calculation
+The environment performs a forward pass to get the logits for all valid tokens $V = \{v_1, \dots, v_k\}$ in the range.
+$$ p_i = \text{softmax}(\text{logits})_i $$
+$$ H(P) = -\sum_{i=1}^{k} p_i \log p_i $$
+$$ H_{\text{norm}} = \frac{H(P)}{\log(k)} $$
+(If $k=1$, $H_{\text{norm}} = 0$).
 
-The reward measures the accuracy of the entropy prediction against the *true* entropy of the model's output distribution.
+### 2. Reward Formula
+$$ R = \max(0, 1.0 - |H_{\text{pred}} - H_{\text{norm}}|) $$
 
-$$ \text{Reward} = 1.0 - |\text{Predicted\_Entropy} - \text{True\_Entropy}| $$
-$$ \text{True\_Entropy} = \frac{-\sum p_i \log p_i}{\log N} $$
+## ⚙️ Configuration Parameters
 
-Where $p_i$ are the normalized probabilities of the valid numbers in the given range.
+These arguments can be passed via `[env.args]` in your TOML config:
 
-## Logic Flow
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `num_examples` | `int` | `2000` | Number of scenarios (ranges, constraints) to generate. |
+| `seed` | `int` | `None` | Random seed. |
 
-1.  **Dataset**: Generates scenarios with different modes:
-    *   **Deterministic**: Only one valid number (Entropy $\approx$ 0).
-    *   **Subset**: Only specific numbers (e.g., primes) are valid.
-    *   **Uniform**: Any number in range is valid.
-    *   **Biased**: "Strongly prefer multiples of X".
-2.  **`step`**:
-    *   **Oracle Call**: Calls `client.forward_backward` (or `forward`) to get the logits for *all* valid numbers in the range given the prefix.
-    *   **Compute True Entropy**:
-        *   Extracts logprobs for each valid number token.
-        *   Normalizes them to get a probability distribution $p$.
-        *   Calculates Shannon entropy $H(p)$.
-    *   **Compute Reward**: Compares prediction to truth.
+## 📂 Source Files
 
-## Configuration Parameters
-
-Defined in `[env.args]` in `configs/train_entropy_intuition.toml`:
-
-*   `num_examples`: Number of scenarios to generate (default: 2000).
-*   `seed`: Random seed.
-
-## Files
-*   `entropy_intuition.py`: Main logic.
+*   **`entropy_intuition.py`**: Generates scenarios (deterministic, subset, uniform, biased), performs the "oracle" forward pass using the training client, and calculates the reward.
