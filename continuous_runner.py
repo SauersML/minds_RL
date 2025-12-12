@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -14,66 +16,22 @@ from rl_config import RunnerConfig
 from verifiers_adapter import make_custom_do_group_rollout
 
 
-def _wrap_rollout_with_tags(rollout_fn):
-    async def _wrapped(env_group_builder, policy):
-        trajectory_group = await rollout_fn(env_group_builder, policy)
-        try:
-            tags = env_group_builder.logging_tags()
-        except Exception:
-            tags = []
-        setattr(trajectory_group, "logging_tags", list(tags or ["default"]))
-        return trajectory_group
+async def _run_config(cfg: train.Config) -> None:
+    """Execute a single training run based on the provided configuration.
 
-    return _wrapped
+    This function patches the ``do_group_rollout`` function in ``tinker_cookbook``
+    if the environment uses the Verifiers adapter. This allows injection of custom
+    logic for rollout execution and scoring.
 
-
-def _install_advantage_normalization() -> None:
-    original_compute = data_processing.compute_advantages
-
-    def _compute_with_whitening(trajectory_groups_P):
-        if not trajectory_groups_P:
-            return original_compute(trajectory_groups_P)
-
-        rewards_by_tag: dict[tuple[str, ...], list[torch.Tensor]] = {}
-        for trajectory_group in trajectory_groups_P:
-            tag = tuple(getattr(trajectory_group, "logging_tags", []) or ["default"])
-            rewards_by_tag.setdefault(tag, []).append(
-                torch.tensor(trajectory_group.get_total_rewards(), dtype=torch.float32)
-            )
-
-        stats = {
-            tag: torch.cat(values)
-            for tag, values in rewards_by_tag.items()
-            if len(values) > 0
-        }
-        means = {tag: tensor.mean() for tag, tensor in stats.items()}
-        stds = {tag: tensor.std(unbiased=False) for tag, tensor in stats.items()}
-
-        normalized: list[torch.Tensor] = []
-        for trajectory_group in trajectory_groups_P:
-            tag = tuple(getattr(trajectory_group, "logging_tags", []) or ["default"])
-            rewards = torch.tensor(trajectory_group.get_total_rewards(), dtype=torch.float32)
-            mean = means.get(tag, rewards.mean())
-            std = stds.get(tag, torch.tensor(0.0))
-            normalized.append((rewards - mean) / (std + 1e-8))
-
-        return normalized
-
-    data_processing.compute_advantages = _compute_with_whitening
-
-
-def _deadline_reached(stop_time: float | None) -> bool:
-    return stop_time is not None and time.time() >= stop_time
-
-
-def _save_checkpoint_on_deadline(training_client, log_path: str, batch_idx: int) -> asyncio.Future:
-    return asyncio.create_task(
-        checkpoint_utils.save_checkpoint_async(
-            training_client,
-            name="deadline",
-            log_path=log_path,
-            loop_state={"batch": batch_idx},
-            kind="both",
+    Args:
+        cfg: The training configuration object.
+    """
+    if isinstance(cfg.dataset_builder, VerifiersRLDatasetBuilder):
+        original_do_group_rollout = train.do_group_rollout
+        group_size = getattr(cfg.dataset_builder, "group_size", 1)
+        rollout_fn = make_custom_do_group_rollout(
+            cfg,
+            group_size=group_size,
         )
     )
 
@@ -262,6 +220,17 @@ def _install_deadline_guard(stop_time: float | None) -> None:
 
 
 def _load_last_state_checkpoint(log_dir: Path) -> str | None:
+    """Find the most recent training checkpoint in the log directory.
+
+    Parses the ``checkpoints.jsonl`` file to find the last entry with a
+    ``state_path``. This path is used to resume training in the next iteration.
+
+    Args:
+        log_dir: The directory containing the training logs.
+
+    Returns:
+        The Tinker URI of the last checkpoint, or None if not found.
+    """
     checkpoints_file = log_dir / "checkpoints.jsonl"
     if not checkpoints_file.exists():
         return None
@@ -286,6 +255,7 @@ def _load_last_state_checkpoint(log_dir: Path) -> str | None:
 
 
 def main() -> None:
+    """Main entry point for the continuous runner."""
     try:
         import wandb  # type: ignore
 

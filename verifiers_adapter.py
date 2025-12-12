@@ -1,3 +1,13 @@
+"""Adapter for running verifiers environments within the Tinker Cookbook training loop.
+
+This module provides a mechanism to patch the standard ``do_group_rollout``
+function in ``tinker_cookbook.rl.train`` with a custom implementation that
+supports ``verifiers``-based environments. This is necessary because the default
+cookbook implementation assumes a simpler environment interface, while
+``verifiers`` environments often require complex rollout logic, including
+multi-turn interactions and scoring semaphores.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -27,10 +37,20 @@ def make_custom_do_group_rollout(
     max_concurrent_generation: int = -1,
     max_concurrent_scoring: int = -1,
 ) -> Any:
-    """Clone of cookbook verifiers rollout adapter for runtime patching.
+    """Create a custom rollout function for verifiers environments.
 
-    The original implementation lives inside the cookbook CLI entrypoint as a local
-    closure, so we vendor the logic here to make it importable by `continuous_runner`.
+    This function returns an async closure that matches the signature of
+    ``do_group_rollout(builder, policy)`` but uses the ``verifiers`` SDK logic
+    to execute the rollout.
+
+    Args:
+        cfg: The training configuration.
+        group_size: The number of rollouts to perform in parallel for each group.
+        max_concurrent_generation: Limit on concurrent generation tasks (semaphore).
+        max_concurrent_scoring: Limit on concurrent scoring tasks (semaphore).
+
+    Returns:
+        An async function ``custom_do_group_rollout(builder, policy) -> TrajectoryGroup``.
     """
 
     shared_renderer: renderers.Renderer | None = None
@@ -136,4 +156,3 @@ def make_custom_do_group_rollout(
         return TrajectoryGroup(trajectories_G, final_rewards_G, metrics_G)
 
     return custom_do_group_rollout
-
