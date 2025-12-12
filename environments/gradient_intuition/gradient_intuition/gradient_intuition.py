@@ -548,10 +548,16 @@ class GradientIntuitionBuilder:
         if env_path.is_dir():
             if str(env_path) not in sys.path:
                 sys.path.append(str(env_path))
+            init_file = env_path / "__init__.py"
+            if not init_file.exists():
+                nested_init = env_path / env_path.name / "__init__.py"
+                if nested_init.exists():
+                    init_file = nested_init
+
             module_spec = importlib.util.spec_from_file_location(
                 env_path.name,
-                env_path / "__init__.py",
-                submodule_search_locations=[str(env_path)],
+                init_file,
+                submodule_search_locations=[str(init_file.parent)],
             )
             if module_spec is None or module_spec.loader is None:
                 raise ImportError(f"Unable to import environment from {env_path}")
