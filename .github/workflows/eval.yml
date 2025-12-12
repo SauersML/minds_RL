@@ -59,20 +59,25 @@ jobs:
 
             echo "Reading from: $CKPT_FILE"
 
-            # Robust parsing: read line by line, ignore corrupt JSON
-            SAMPLER_PATH=$(python -c "import json, sys; path=None
-            try:
-              lines=open(sys.argv[1]).readlines()
-            except: sys.exit(1)
-            for l in reversed(lines):
+            # Robust parsing using textwrap to handle YAML indentation safely
+            SAMPLER_PATH=$(python -c "import sys, json, textwrap; \
+            exec(textwrap.dedent('''
               try:
-                d=json.loads(l)
-                if 'sampler_path' in d:
-                  path=d['sampler_path']
-                  break
-              except: continue
-            if path: print(path)
-            else: sys.exit(1)" "$CKPT_FILE")
+                lines = open(sys.argv[1]).readlines()
+              except: sys.exit(1)
+              
+              found = None
+              for l in reversed(lines):
+                try:
+                  d = json.loads(l)
+                  if 'sampler_path' in d:
+                    found = d['sampler_path']
+                    break
+                except: continue
+              
+              if found: print(found)
+              else: sys.exit(1)
+            '''))" "$CKPT_FILE")
 
             if [ -z "$SAMPLER_PATH" ]; then
                echo "::error::Could not find sampler_path in $CKPT_FILE"
