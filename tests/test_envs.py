@@ -120,8 +120,15 @@ async def check_single_env(env_path: Path):
             return False
             
         # Create the actual environment instances
-        envs = await env_group_builders[0].make_envs()
+        builder_instance = env_group_builders[0]
+        envs = await builder_instance.make_envs()
         if not envs:
+            # Handle Verifiers environments which intentionally return empty lists
+            # because they use a custom rollout mechanism (see verifiers_adapter.py)
+            if hasattr(builder_instance, "vf_env"):
+                print("   ✅ Verifiers environment detected (skipping instantiation check).")
+                return True
+
             print("   ❌ No environments created.")
             return False
         
@@ -129,8 +136,12 @@ async def check_single_env(env_path: Path):
         # This checks if the prompt rendering works
         print("   👀 Checking Initial Observation...")
         
-        # Depending on the renderer, obs might be a string or a tuple/object
-        # We just want to ensure it didn't crash
+        try:
+            await envs[0].initial_observation()
+        except Exception as e:
+            print(f"   ❌ Initial observation failed: {e}")
+            return False
+
         print("   ✅ Environment initialized and generated prompt successfully.")
         return True
 
