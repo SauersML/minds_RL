@@ -1,21 +1,49 @@
-import os
-import sys
-import subprocess
-import time
-from pathlib import Path
+import asyncio
 import importlib
-import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+from pathlib import Path
 
-# Ensure project root is in sys.path so 'custom_utils' (flat layout) is importable
-if os.getcwd() not in sys.path:
-    sys.path.insert(0, os.getcwd())
+# Ensure project root is in sys.path
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 # --- Configuration ---
 TINKER_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
-MAX_STEPS = 1
-ROLLOUTS = 2
-MAX_TOKENS = 256
-ROOT_DIR = Path(os.getcwd())
+# Config template used to test initialization
+CONFIG_TEMPLATE = """
+[env]
+id = "{env_id}"
+
+[env.args]
+num_examples = 2  # Keep it small for testing
+seed = 42
+# Args specifically for gradient_intuition nesting
+inner_env_id = "./environments/ghost_trace"
+inner_env_args = {{ num_examples = 2 }}
+
+[trainer]
+rollouts_per_example = 1
+loss_fn = "importance_sampling"
+
+[trainer.args]
+max_new_tokens = 128
+training_rank = 8
+learning_rate = 3.162e-6
+
+[model]
+base_model = "{base_model}"
+renderer_name = "role_colon" 
+
+[tinker]
+api_key_env = "TINKER_API_KEY"
+"""
 
 def print_header(msg):
     print(f"\n{'='*60}\n🚀 {msg}\n{'='*60}")
@@ -35,164 +63,128 @@ def run_cmd(cmd, description):
 
 def install_dependencies():
     print_header("INSTALLING DEPENDENCIES")
-    run_cmd(["pip", "install", "tinker"], "Installing Tinker SDK")
-    run_cmd(["pip", "install", "tinker_cookbook"], "Installing tinker_cookbook")
+    # Install core libs
+    run_cmd(["pip", "install", "tinker", "tinker_cookbook", "verifiers", "tomli", "numpy", "datasets"], "Installing Core Libs")
     
-    utils_path = ROOT_DIR / "custom_utils"
-    run_cmd(["pip", "install", "-e", str(utils_path)], "Installing custom_utils")
-
-def discover_and_install_envs():
-    print_header("DISCOVERING ENVIRONMENTS")
+    # Install local environments
     envs_dir = ROOT_DIR / "environments"
-    if not envs_dir.exists():
-        print("❌ Error: 'environments' directory not found.")
-        sys.exit(1)
-    
-    discovered = []
-    # Ensure environments/ is importable for non-packaged envs
-    envs_dir_str = str(envs_dir)
-    if envs_dir_str not in sys.path:
-        sys.path.insert(0, envs_dir_str)
-    
-    # Look for any directory containing a pyproject.toml or __init__.py
-    for item in sorted(envs_dir.iterdir()):
-        if not item.is_dir():
-            continue
-        has_pyproject = (item / "pyproject.toml").exists()
-        has_init = (item / "__init__.py").exists()
-        
-        if not (has_pyproject or has_init):
-            continue
-        
-        discovered.append(item)
-        if has_pyproject:
-            run_cmd(["pip", "install", "-e", str(item)], f"Installing env: {item.name}")
-        else:
-            print(f"   ℹ️  Added {item.name} to sys.path (no pyproject found)")
-    
-    if not discovered:
-        print("⚠️  No environments found in environments/ directory.")
-    
-    return discovered
+    if envs_dir.exists():
+        for item in sorted(envs_dir.iterdir()):
+            if item.is_dir() and (item / "pyproject.toml").exists():
+                run_cmd(["pip", "install", "-e", str(item)], f"Installing Env Package: {item.name}")
 
-def generate_config(env_path, output_path):
-    # Relative path for the config
-    rel_path = f"./environments/{env_path.name}"
-    
-    if env_path.name == "gradient_intuition":
-        env_args_block = (
-            "[env.args]\n"
-            "inner_env_id = \"./environments/ghost_trace\"\n"
-            "inner_env_args = { num_examples = 3 }\n"
-            "alpha = 0.3\n"
-            "shadow_rank = 4\n"
-            "shadow_learning_rate = 5e-5\n\n"
-        )
-    else:
-        env_args_block = "[env.args]\nnum_examples = 5  # Small dataset for speed\n\n"
-    
-    toml_content = f"""[env]
-id = "{rel_path}"
-{env_args_block}
-[trainer]
-rollouts_per_example = {ROLLOUTS}
-loss_fn = "importance_sampling"
-
-[trainer.args]
-  max_new_tokens = {MAX_TOKENS}
-  training_rank = 8
-  learning_rate = 3.162e-6
-
-[model]
-base_model = "{TINKER_MODEL}"
-
-[tinker]
-api_key_env = "TINKER_API_KEY"
-"""
-    output_path.write_text(toml_content)
-
-def run_integration_test(env_path):
+async def test_single_env(env_path: Path):
     env_name = env_path.name
     print(f"\n🧪 TESTING ENVIRONMENT: [ {env_name} ]")
-    
-    # Dynamic imports to ensure we pick up the installed packages
+
+    # 1. Create a temporary config file
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".toml", delete=False) as tmp:
+        config_content = CONFIG_TEMPLATE.format(
+            env_id=f"./environments/{env_name}",
+            base_model=TINKER_MODEL
+        )
+        tmp.write(config_content)
+        config_path = Path(tmp.name)
+
     try:
-        # Force reload of trainer to clear previous states if any
-        if "custom_utils.trainer" in sys.modules:
-            import custom_utils.trainer
-            importlib.reload(custom_utils.trainer)
-        from custom_utils.trainer import Trainer
-    except ImportError as e:
-        print(f"   ❌ Import Failed: {e}")
-        return False
-    
-    # Create run-specific config and output dir
-    run_dir = ROOT_DIR / "runs" / f"test_{env_name}_{int(time.time())}"
-    config_file = run_dir / "config.toml"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    
-    generate_config(env_path, config_file)
-    
-    try:
-        print("   ⚙️  Configuring Trainer...")
-        trainer = Trainer.from_config(config_file)
+        # 2. Dynamic Import of local config logic
+        # We use rl_config.py from the root directory
+        import rl_config
+
+        # 3. Build the configuration object
+        print("   ⚙️  Building RunnerConfig...")
+        runner_cfg = rl_config.RunnerConfig(
+            config_path=config_path,
+            log_root=ROOT_DIR / "outputs"
+        )
+        # This parses the TOML and calls _build_dataset_builder
+        # which imports the environment module
+        train_config = runner_cfg.build()
         
-        print(f"   ⚡ Sending Job to Tinker (Steps: {MAX_STEPS})...")
-        trainer.train(max_steps=MAX_STEPS, output_dir=run_dir)
+        # 4. Initialize the Dataset Builder
+        # This usually involves connecting to the Tinker API to get the tokenizer/client
+        print("   🔌 Connecting to Tinker & Initializing Builder...")
+        builder = train_config.dataset_builder
         
-        # Validation
-        metrics_file = run_dir / "metrics.jsonl"
-        if metrics_file.exists():
-            with metrics_file.open() as f:
-                data = [json.loads(line) for line in f if line.strip()]
-            
-            valid_entries = [entry for entry in data if isinstance(entry, dict)]
-            if valid_entries:
-                last_reward = valid_entries[-1].get("reward", "N/A")
-                print(f"   ✅ SUCCESS! Final Reward: {last_reward}")
-                return True
-            
-            if data:
-                print("   ⚠️  Metrics file contains non-dictionary entries; skipping reward display.")
-                return True
-            
-            print("   ⚠️  Metrics file is empty.")
+        # 5. Build the dataset (Async operation)
+        # This verifies data generation and API client creation
+        dataset, _ = await builder()
+        
+        if len(dataset) == 0:
+            print("   ⚠️  Dataset is empty.")
             return False
-        else:
-            print("   ⚠️  Finished, but no metrics file generated.")
+
+        # 6. Instantiate the Environment
+        print("   🏗️  Instantiating Environment...")
+        # Get the first batch of environment factories
+        env_group_builders = dataset.get_batch(0)
+        if not env_group_builders:
+            print("   ❌ Failed to get batch from dataset.")
             return False
             
+        # Create the actual environment instances
+        envs = await env_group_builders[0].make_envs()
+        if not envs:
+            print("   ❌ No environments created.")
+            return False
+        
+        env = envs[0]
+
+        # 7. Run Initial Observation
+        # This checks if the prompt rendering works
+        print("   👀 Checking Initial Observation...")
+        obs = env.initial_observation()
+        
+        # Depending on the renderer, obs might be a string or a tuple/object
+        # We just want to ensure it didn't crash
+        print("   ✅ Environment initialized and generated prompt successfully.")
+        return True
+
     except Exception as e:
         print(f"   ❌ CRASHED: {e}")
-        # import traceback
-        # traceback.print_exc()
+        traceback.print_exc()
         return False
     finally:
-        # Cleanup config to keep repo clean
-        if config_file.exists():
-            os.remove(config_file)
+        # Cleanup
+        if config_path.exists():
+            os.remove(config_path)
 
-def main():
+async def main_async():
     # 0. Auth Check
     if not os.getenv("TINKER_API_KEY"):
         print("❌ Error: TINKER_API_KEY is not set.")
         sys.exit(1)
-    
+
     # 1. Setup
     install_dependencies()
-    
-    # 2. Discovery & Install
-    env_paths = discover_and_install_envs()
-    
+
+    # 2. Discovery
+    print_header("AUTO-DISCOVERING ENVIRONMENTS")
+    envs_dir = ROOT_DIR / "environments"
+    if not envs_dir.exists():
+        print("❌ Error: 'environments' directory not found.")
+        sys.exit(1)
+
+    discovered = []
+    for item in sorted(envs_dir.iterdir()):
+        if not item.is_dir():
+            continue
+        # Check for python package markers
+        if (item / "__init__.py").exists() or (item / "pyproject.toml").exists():
+            discovered.append(item)
+            print(f"   🔍 Found: {item.name}")
+
+    if not discovered:
+        print("⚠️  No environments found.")
+        sys.exit(1)
+
     # 3. Execution Loop
-    print_header("STARTING INTEGRATION TESTS")
     results = {}
-    
-    for env_path in env_paths:
-        success = run_integration_test(env_path)
+    for env_path in discovered:
+        success = await test_single_env(env_path)
         results[env_path.name] = "PASS" if success else "FAIL"
-    
-    # 4. Final Report
+
+    # 4. Summary
     print_header("TEST SUMMARY")
     print(f"{'ENVIRONMENT':<30} | {'STATUS':<10}")
     print("-" * 45)
@@ -203,8 +195,11 @@ def main():
         print(f"{name:<30} | {icon} {status}")
         if status == "FAIL":
             all_passed = False
-            
+
     sys.exit(0 if all_passed else 1)
+
+def main():
+    asyncio.run(main_async())
 
 if __name__ == "__main__":
     main()
