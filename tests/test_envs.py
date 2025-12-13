@@ -81,7 +81,7 @@ class VerifiersEnvWrapper:
             metrics={}
         )
 
-async def run_env_episode(name: str, env: Any, sampling_client: tinker.SamplingClient, tokenizer: Any):
+async def run_env_episode(name: str, env: Any, sampling_client: tinker.SamplingClient, tokenizer: Any, renderer: renderers.Renderer):
     # Wrap raw verifiers environments if they don't support the Tinker interface
     if not hasattr(env, "initial_observation"):
         env = VerifiersEnvWrapper(env)
@@ -102,6 +102,13 @@ async def run_env_episode(name: str, env: Any, sampling_client: tinker.SamplingC
     except Exception as e:
         logger.error(f"{prefix} Failed to get initial observation: {e}")
         return
+
+    # Convert observation to ModelInput if it is string or list of messages
+    if isinstance(obs, str):
+        obs = renderer.build_generation_prompt([{"role": "user", "content": obs}])
+    elif isinstance(obs, list):
+        # Assume list of messages
+        obs = renderer.build_generation_prompt(obs)
 
     # Decode for logging
     if hasattr(obs, "to_ints"):
@@ -194,7 +201,7 @@ async def main():
                 continue
 
             # Run one episode on the first instance of this environment type
-            await run_env_episode(name, envs[0], sampling_client, tokenizer)
+            await run_env_episode(name, envs[0], sampling_client, tokenizer, renderer)
 
         except Exception as e:
             logger.error(f"[{name}] Failed to load or run: {e}", exc_info=True)
