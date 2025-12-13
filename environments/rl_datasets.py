@@ -270,7 +270,10 @@ class GradientIntuitionRLDatasetBuilder(RLDatasetBuilder):
     shadow_learning_rate: float = 1e-4
 
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
-        shadow_service_client = tinker.ServiceClient(base_url=self.base_url)
+        service_client = tinker.ServiceClient(base_url=self.base_url)
+        sampling_client = await service_client.create_sampling_client_async(base_model=self.model_name)
+        sampling_client.tokenizer = get_tokenizer(self.model_name)
+
         builder = GradientIntuitionBuilder(
             inner_env_id=self.inner_env_id,
             inner_env_args=self.inner_env_args,
@@ -282,8 +285,8 @@ class GradientIntuitionRLDatasetBuilder(RLDatasetBuilder):
         )
 
         envs = builder.build(
-            sampling_client=None,
-            service_client=shadow_service_client,
+            sampling_client=sampling_client,
+            service_client=service_client,
             base_model=self.model_name,
             training_client=None,
         )
