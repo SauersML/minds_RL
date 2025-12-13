@@ -288,8 +288,8 @@ def make_custom_do_group_rollout(
 
             # Inject runtime objects into info so environments can perform model-based scoring
             current_info = dict(vf_builder.info) if vf_builder.info else {}
-            current_info["tinker_client"] = sampling_client
-            current_info["tokenizer"] = local_tokenizer
+            # NOTE: We do NOT inject client/tokenizer here because env.rollout may deepcopy
+            # the input, and clients contain asyncio primitives that cannot be pickled/deepcopied.
 
             rollout_input: vf.RolloutInput = {
                 "prompt": vf_builder.prompt,
@@ -303,7 +303,7 @@ def make_custom_do_group_rollout(
             if gen_sem:
                 async with gen_sem:
                     # Handle the case where rollout might return (state, auxiliary_info) or just state
-                    # Recent changes in Verifiers SDK might return a tuple
+                    # Verifiers SDK might return a tuple???? idk
                     result = await env.rollout(
                         input=rollout_input,
                         client=local_client,
@@ -324,11 +324,21 @@ def make_custom_do_group_rollout(
             else:
                 state = result
 
+            # Inject runtime objects into state for scoring. This avoids the deepcopy issue in rollout.
+            if "info" not in state:
+                state["info"] = {}
+            if not isinstance(state["info"], dict):
+                state["info"] = dict(state["info"]) if state["info"] else {}
+            
+            state["info"]["tinker_client"] = sampling_client
+            state["info"]["tokenizer"] = local_tokenizer
+
             score_sem = await maybe_semaphore(score_limit)
             await env.rubric.score_rollout(
                 state=state,
                 score_sem=score_sem,
             )
+            
             rs: vf.RolloutScore = {
                 "reward": state["reward"],
                 "metrics": state.get("metrics", {}),
