@@ -72,7 +72,7 @@
           "shadow_rank": 8,
           "shadow_learning_rate": 0.0001
         },
-        0.14
+        0.0
       ],
       [
         "eval_math_static",
@@ -145,7 +145,7 @@
   "remove_constant_reward_groups": false,
   "eval_every": 200,
   "save_every": 10,
-  "load_checkpoint_path": "tinker://67a22dc4-8e64-5067-9bb2-bb169d1f8ee1:train:0/weights/000000",
+  "load_checkpoint_path": "tinker://eee065c8-7d48-55d2-a3fc-818f2f90e79b:train:0/weights/000000",
   "async_config": {
     "max_steps_off_policy": 2,
     "groups_per_batch": 64
