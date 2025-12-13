@@ -632,9 +632,9 @@ class GradientIntuitionEnv(Env):
         forward_fn = getattr(shadow_client, "forward_backward_async", None)
         optim_fn = getattr(shadow_client, "optim_step_async", None)
         if callable(forward_fn):
-            await forward_fn([datum])
+            await forward_fn([datum], loss_fn="cross_entropy")
         else:
-            await _maybe_await(shadow_client.forward_backward([datum]))
+            await _maybe_await(shadow_client.forward_backward([datum], loss_fn="cross_entropy"))
         adam = tinker.AdamParams(learning_rate=float(self.shadow_learning_rate))
         if callable(optim_fn):
             await optim_fn(adam)
