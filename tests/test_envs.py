@@ -12,10 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import tinker  # noqa: E402
-from tinker import types  # noqa: E402
-from tinker_cookbook import renderers, model_info  # noqa: E402
-from tinker_cookbook.tokenizer_utils import get_tokenizer  # noqa: E402
+import tinker
+from tinker import types
+from tinker_cookbook import renderers, model_info
+from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.rl.types import StepResult
 
 # Configure logging
 logging.basicConfig(
@@ -72,8 +73,7 @@ class VerifiersEnvWrapper:
         return "Dummy Prompt"
 
     async def step(self, action):
-        # Return dummy step result to satisfy test loop
-        return types.StepResult(
+        return StepResult(
             reward=0.0,
             episode_done=True,
             next_observation=types.ModelInput.empty(),
@@ -81,9 +81,10 @@ class VerifiersEnvWrapper:
             metrics={}
         )
 
-async def run_env_episode(name: str, env: Any, sampling_client: tinker.SamplingClient, tokenizer: Any, renderer: renderers.Renderer):
-    # Wrap raw verifiers environments if they don't support the Tinker interface
-    if not hasattr(env, "initial_observation"):
+async def run_env_episode(name: str, env: Any, env_type: str, sampling_client: tinker.SamplingClient, tokenizer: Any, renderer: renderers.Renderer):
+    # instead of relying on hasattr checks which fail for envs like GhostTrace 
+    # that implement partial interfaces.
+    if env_type == "verifiers_env":
         env = VerifiersEnvWrapper(env)
 
     prefix = f"[{name}]"
@@ -143,7 +144,7 @@ async def run_env_episode(name: str, env: Any, sampling_client: tinker.SamplingC
         logger.info(f"{prefix} Reward: {step_result.reward}")
         logger.info(f"{prefix} Metrics: {step_result.metrics}")
     except Exception as e:
-        logger.error(f"{prefix} Step failed: {e}")
+        logger.error(f"{prefix} Step failed: {e}", exc_info=True)
 
 async def main():
     logger.info("INITIALIZING ALL ENVS TEST")
@@ -160,6 +161,7 @@ async def main():
 
     for config in ENV_CONFIGS:
         name = config["name"]
+        env_type = config["type"]
         logger.info(f"--- Loading {name} ---")
         
         try:
@@ -170,21 +172,19 @@ async def main():
             # Instantiate based on type
             envs = []
             
-            if config["type"] == "verifiers_env":
+            if env_type == "verifiers_env":
                 # Verifiers envs (Ghost, SelfPred) load directly into an Env object
                 env = loader(**config["kwargs"])
-                # We need to manually inject renderer for some verifiers envs if they rely on external rendering logic 
-                # or assume they handle it internally. Most Verifiers envs handle text-in/text-out.
                 envs = [env]
 
-            elif config["type"] == "prophet_builder":
+            elif env_type == "prophet_builder":
                 # Gradient Prophet loads a Builder, which builds Envs
                 builder = loader(**config["kwargs"])
                 # Inject renderer manually as it's required for Prophet
                 builder.renderer = renderer 
                 envs = builder.build(sampling_client)
 
-            elif config["type"] == "intuition_builder":
+            elif env_type == "intuition_builder":
                 # Intuition loads a Builder
                 # Requires renderer in kwargs for the builder constructor
                 kwargs = config["kwargs"].copy()
@@ -201,7 +201,7 @@ async def main():
                 continue
 
             # Run one episode on the first instance of this environment type
-            await run_env_episode(name, envs[0], sampling_client, tokenizer, renderer)
+            await run_env_episode(name, envs[0], env_type, sampling_client, tokenizer, renderer)
 
         except Exception as e:
             logger.error(f"[{name}] Failed to load or run: {e}", exc_info=True)
