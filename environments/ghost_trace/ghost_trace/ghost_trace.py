@@ -36,7 +36,7 @@ def _build_dataset(count: int = 5000, *, seed: int | None = None) -> list[dict[s
         dataset.append(
             {
                 "example_id": idx,
-                "question": prompt_template.format(target_word=target_word.capitalize()),
+                "prompt": [{"role": "user", "content": prompt_template.format(target_word=target_word.capitalize())}],
                 "info": {"target_word": target_word},
             }
         )
@@ -141,6 +141,10 @@ async def _communication_reward(
     # Fallback: Check info directly (populated during evaluation)
     if not target_word and isinstance(info, Mapping):
         target_word = info.get("target_word")
+
+    # Fallback: Check state['info'] directly
+    if not target_word and isinstance(state, Mapping) and isinstance(state.get("info"), Mapping):
+        target_word = state["info"].get("target_word")
 
     if not target_word:
         raise ValueError("Ghost Trace Error: 'target_word' missing from sample metadata.")
@@ -295,6 +299,10 @@ class GhostTraceEnv(vf.SingleTurnEnv):
                 state["info"] = {}
             elif not isinstance(state["info"], MutableMapping):
                 state["info"] = dict(state["info"])
+
+            # Inject info from input if present
+            if isinstance(input, Mapping) and "info" in input and input["info"]:
+                state["info"].update(input["info"])
 
             if hasattr(client, "sampling_client"):
                 state["info"]["tinker_client"] = client.sampling_client
