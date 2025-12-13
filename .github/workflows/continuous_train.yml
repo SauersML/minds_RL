@@ -25,6 +25,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Fetch full history so we can rebase and push back successfully
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -84,20 +87,25 @@ jobs:
           git config --global user.name "Tinker Bot"
           git config --global user.email "bot@tinker.ai"
 
-          # 1. STAGE: Add the generated files to git index
-          # Including metrics.jsonl ensures logs are captured
-          git add -f run_state.json outputs/*/checkpoints.jsonl outputs/*/config.json outputs/*/metrics.jsonl
+          # We use '|| true' to prevent failure if the output directory hasn't been created yet
+          git add -f run_state.json outputs/*/checkpoints.jsonl outputs/*/config.json outputs/*/metrics.jsonl || true
           
-          # 2. COMMIT: Save the state locally first. 
-          # This protects the data from being overwritten by the pull.
-          git commit -m "🤖 Update Training State [skip ci]" || echo "No changes to commit"
+          # Only proceed if there are staged changes
+          if ! git diff --staged --quiet; then
+            git commit -m "🤖 Update Training State [skip ci]"
+            
+            # Removes any other files (logs/temp files) that weren't added above.
+            # This ensures the working directory is clean for the rebase.
+            git stash --include-untracked
+            
+            # 4. PULL REBASE: Sync with remote
+            git pull --rebase origin main
 
-          # 3. PULL: Sync with remote changes (e.g. if you edited code during the run).
-          # Using rebase applies our new 'Training State' commit on TOP of your code changes.
-          git pull --rebase origin main
-
-          # 4. PUSH: Send the merged history back to the repo.
-          git push
+            # 5. PUSH
+            git push
+          else
+            echo "No changes to training state found, skipping push."
+          fi
 
       - name: Upload training artifacts
         if: always()
