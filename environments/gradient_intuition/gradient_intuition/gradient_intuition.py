@@ -346,15 +346,22 @@ class GradientIntuitionEnv(Env):
         except Exception:
             return dataset[0]
 
-    def _extract_base_prompt(self) -> str:
-        prompt: str | None = None
+    async def _extract_base_prompt(self) -> str:
+        prompt: Any = None
         if hasattr(self.inner_env, "initial_observation") and callable(
             getattr(self.inner_env, "initial_observation")
         ):
             try:
                 prompt = self.inner_env.initial_observation()
+                if inspect.isawaitable(prompt):
+                    prompt = await prompt
             except Exception:
                 prompt = None
+        
+        # Handle list of messages (Verifiers format)
+        if isinstance(prompt, list) and len(prompt) > 0 and isinstance(prompt[-1], dict):
+            prompt = prompt[-1].get("content", "")
+
         if not prompt and hasattr(self.inner_env, "state"):
             state_sample = getattr(self.inner_env, "state", {})
             if hasattr(state_sample, "get"):
@@ -387,7 +394,7 @@ class GradientIntuitionEnv(Env):
         return tinker.ModelInput.from_ints([]), list(stop_seqs)
 
     async def initial_observation(self) -> tuple[tinker.ModelInput, list[int]]:
-        base_prompt_str = self._extract_base_prompt()
+        base_prompt_str = await self._extract_base_prompt()
         self._current_prompt = base_prompt_str
 
         sample = (
