@@ -92,7 +92,7 @@ def _sanity_reward(
         score = grade_exact(prediction, answer)
 
     # Metrics
-    if "metrics" not in state:
+    if state.get("metrics") is None:
         state["metrics"] = {}
 
     state["metrics"]["is_correct"] = float(score)
