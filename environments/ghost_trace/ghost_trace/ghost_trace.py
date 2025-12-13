@@ -279,6 +279,30 @@ class GhostTraceEnv(vf.SingleTurnEnv):
         prompt = sample.get("prompt") or sample.get("question") or ""
         return str(prompt)
 
+    async def rollout(
+        self,
+        input: Any,
+        client: Any,
+        model: str,
+        sampling_args: dict[str, Any],
+    ) -> Any:
+        result = await super().rollout(input, client, model, sampling_args)
+
+        state = result[0] if isinstance(result, tuple) else result
+
+        if isinstance(state, MutableMapping):
+            if "info" not in state or state["info"] is None:
+                state["info"] = {}
+            elif not isinstance(state["info"], MutableMapping):
+                state["info"] = dict(state["info"])
+
+            if hasattr(client, "sampling_client"):
+                state["info"]["tinker_client"] = client.sampling_client
+            if hasattr(client, "tokenizer"):
+                state["info"]["tokenizer"] = client.tokenizer
+
+        return result
+
     @staticmethod
     def _find_subsequence(sequence: list[int], subsequence: list[int]) -> int:
         if not subsequence or not sequence:
