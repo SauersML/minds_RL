@@ -35,34 +35,37 @@ try:
     InternalClientHolder.__del__ = _safe_del
 except ImportError:
     pass
+# -----------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 
 # --- Helper for robust saving ---
 async def save_checkpoint_async(**kwargs):
     """
-    Wraps save_checkpoint_async. If a checkpoint name collision occurs
-    (server has it, but we don't), retry with suffixes _1, _2, etc.
+    Wraps checkpoint_utils.save_checkpoint_async.
+    If a checkpoint name collision occurs (server has it, but we don't because 
+    local logs were wiped), retry with suffixes _1, _2, etc. until successful.
     """
-    base_name = kwargs.get("name", "ckpt")
+    original_name = kwargs.get("name", "ckpt")
     
-    # Try exact name first
+    # 1. Try the intended name first
     try:
         return await checkpoint_utils.save_checkpoint_async(**kwargs)
     except tinker.ConflictError:
-        print(f"⚠️ Conflict: Checkpoint '{base_name}' exists on server. Attempting resolution...")
+        print(f"⚠️  Conflict: Checkpoint '{original_name}' already exists on server. Resolving...")
 
-    # Iterate until we find a free slot
+    # 2. Iterate with suffixes until we find a free slot
     for i in range(1, 1000):
-        new_name = f"{base_name}_{i}"
-        print(f"🔄 Retrying save as: '{new_name}'")
+        new_name = f"{original_name}_{i}"
+        print(f"🔄  Retrying checkpoint save as: '{new_name}'")
         kwargs["name"] = new_name
         try:
             return await checkpoint_utils.save_checkpoint_async(**kwargs)
         except tinker.ConflictError:
-            continue # Name taken, try next
+            continue # Name taken, loop again
             
-    raise RuntimeError(f"Could not save checkpoint '{base_name}' after 1000 attempts.")
+    raise RuntimeError(f"Could not save checkpoint '{original_name}' after 1000 collision attempts.")
+# --------------------------------
 
 def _install_advantage_normalization() -> None:
     # Tinker automatically centers advantages within each TrajectoryGroup.
@@ -87,9 +90,14 @@ def _install_deadline_guard(stop_time: float | None) -> None:
         ml_logger,
         tokenizer,
     ):
-        sampling_client, _ = await train.save_checkpoint_and_get_sampling_client(
-            training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
+        sampling_client, _ = await save_checkpoint_async(
+            training_client=training_client, 
+            name=f"{start_batch:06d}", 
+            log_path=cfg.log_path, 
+            loop_state={"batch": start_batch}, 
+            kind="both"
         )
+        sampling_client = training_client.create_sampling_client(sampling_client["sampler_path"])
 
         for i_batch in range(start_batch, end_batch):
             if _deadline_reached(stop_time):
@@ -179,9 +187,14 @@ def _install_deadline_guard(stop_time: float | None) -> None:
         ml_logger,
         tokenizer,
     ):
-        sampling_client, _ = await train.save_checkpoint_and_get_sampling_client(
-            training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
+        sampling_client, _ = await save_checkpoint_async(
+            training_client=training_client, 
+            name=f"{start_batch:06d}", 
+            log_path=cfg.log_path, 
+            loop_state={"batch": start_batch}, 
+            kind="both"
         )
+        sampling_client = training_client.create_sampling_client(sampling_client["sampler_path"])
 
         for i_batch in range(start_batch, end_batch):
             if _deadline_reached(stop_time):
