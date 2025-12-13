@@ -112,12 +112,11 @@ def _extract_logprob(result: Any) -> float | None:
             return float(result["total_logprob"])
         if "data" in result:
             return _extract_logprob(result.get("data"))
-    if isinstance(result, Sequence) and result:
+    if isinstance(result, Sequence) and not isinstance(result, (str, bytes)) and result:
         first = result[0]
         if isinstance(first, (int, float)):
             return float(first)
-        if isinstance(first, Mapping):
-            return _extract_logprob(first)
+        return _extract_logprob(first)
     attr_val = getattr(result, "total_logprob", None)
     if isinstance(attr_val, (int, float)):
         return float(attr_val)
@@ -134,7 +133,14 @@ def _extract_logprob(result: Any) -> float | None:
 def _extract_logprob_sequence(result: Any) -> list[float]:
     if result is None:
         return []
-    if isinstance(result, Sequence) and not isinstance(result, Mapping):
+    if (
+        isinstance(result, Sequence)
+        and not isinstance(result, (Mapping, str, bytes))
+    ):
+        if result:
+            first = result[0]
+            if not isinstance(first, (int, float)):
+                return _extract_logprob_sequence(first)
         return [float(x) for x in result if isinstance(x, (int, float))]
     if isinstance(result, Mapping):
         prompt_lp = result.get("prompt_logprobs") if hasattr(result, "get") else None
