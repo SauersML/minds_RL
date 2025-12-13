@@ -36,7 +36,7 @@ def _build_dataset(count: int = 5000, *, seed: int | None = None) -> list[dict[s
         dataset.append(
             {
                 "example_id": idx,
-                "question": prompt_template.format(target_word=target_word.capitalize()),
+                "prompt": prompt_template.format(target_word=target_word.capitalize()),
                 "info": {"target_word": target_word},
             }
         )
@@ -250,7 +250,7 @@ class GhostTraceEnv(vf.SingleTurnEnv):
         seed = getattr(self, "seed", None)
         self._rng = random.Random(seed)
 
-    def initial_observation(self) -> str:
+    async def initial_observation(self) -> str:
         dataset = getattr(self, "dataset", None)
         sample: Mapping[str, Any] | None = None
 
