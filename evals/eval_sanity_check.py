@@ -23,20 +23,24 @@ def _generate_sanity_dataset():
         elif op == '-': ans = a - b
         else: ans = a * b
         dataset.append({
-            "difficulty": "easy",
             "question": f"Compute {a} {op} {b}. Output the answer only.",
             "answer": str(ans),
-            "grader": "numeric"
+            "info": {
+                "difficulty": "easy",
+                "grader": "numeric"
+            }
         })
 
     for _ in range(30):
         # String copy / simple transform
         word = rng.choice(["apple", "banana", "cherry", "date", "elderberry"])
         dataset.append({
-            "difficulty": "easy",
             "question": f"Repeat the word '{word}' exactly.",
             "answer": word,
-            "grader": "exact"
+            "info": {
+                "difficulty": "easy",
+                "grader": "exact"
+            }
         })
 
     # Hard Items
@@ -45,41 +49,15 @@ def _generate_sanity_dataset():
         a = rng.randint(100, 999)
         b = rng.randint(11, 99)
         dataset.append({
-            "difficulty": "hard",
             "question": f"Compute {a} * {b}. Output the answer only.",
             "answer": str(a * b),
-            "grader": "numeric"
+            "info": {
+                "difficulty": "hard",
+                "grader": "numeric"
+            }
         })
 
     return dataset
-
-class SanityEnv(vf.SingleTurnEnv):
-    """
-    Subclass of SingleTurnEnv that injects dataset metadata (difficulty, grader)
-    into the state/info so the rubric can access it.
-    """
-    async def rollout(
-        self,
-        input: vf.RolloutInput,
-        client: vf.Client,
-        model: str,
-        sampling_args: dict[str, Any],
-    ) -> dict[str, Any]:
-        # Perform the standard rollout
-        # Note: input contains 'example_id'.
-        # We can look up the dataset here and inject into info.
-
-        example_id = input.get("example_id")
-        if example_id is not None and self.dataset:
-            item = self.dataset[example_id]
-            # Inject metadata into input['info'] so it flows to state/rubric
-            if "info" not in input:
-                input["info"] = {}
-            if item:
-                input["info"]["difficulty"] = item.get("difficulty")
-                input["info"]["grader"] = item.get("grader")
-
-        return await super().rollout(input, client, model, sampling_args)
 
 def _sanity_reward(
     prompt: Any,
@@ -90,6 +68,7 @@ def _sanity_reward(
     **kwargs: Any
 ) -> float:
     # Retrieve difficulty/grader from info
+    # The 'info' dict from the dataset is passed here by SingleTurnEnv
     difficulty = "unknown"
     grader_type = "exact"
 
@@ -133,7 +112,7 @@ def load_environment(**kwargs):
 
     rubric = vf.Rubric(funcs=[_sanity_reward])
 
-    return SanityEnv(
+    return vf.SingleTurnEnv(
         dataset=dataset,
         rubric=rubric,
         **kwargs
