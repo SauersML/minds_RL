@@ -35,7 +35,6 @@ try:
     InternalClientHolder.__del__ = _safe_del
 except ImportError:
     pass
-# -----------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +63,6 @@ async def save_checkpoint_async(**kwargs):
             continue # Name taken, try next
             
     raise RuntimeError(f"Could not save checkpoint '{base_name}' after 1000 attempts.")
-# --------------------------------
 
 def _install_advantage_normalization() -> None:
     # Tinker automatically centers advantages within each TrajectoryGroup.
