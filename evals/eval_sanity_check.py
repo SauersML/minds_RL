@@ -58,56 +58,44 @@ class SanityEnv(vf.SingleTurnEnv):
     Subclass of SingleTurnEnv that injects dataset metadata (difficulty, grader)
     into the state/info so the rubric can access it.
     """
-    def step(self, action: Any) -> tuple[Any, Any, bool, bool, dict[str, Any]]:
-        # The parent step calls rollout and then rubric.
-        # We want to intercept the result to ensure metadata is available.
-        # SingleTurnEnv.step() implementation typically:
-        # 1. Get example from dataset
-        # 2. rollout()
-        # 3. rubric.score_rollout()
-        # 4. Return formatted observation, reward, etc.
+    async def rollout(
+        self,
+        input: vf.RolloutInput,
+        client: vf.Client,
+        model: str,
+        sampling_args: dict[str, Any],
+    ) -> dict[str, Any]:
+        # Perform the standard rollout
+        # Note: input contains 'example_id'.
+        # We can look up the dataset here and inject into info.
 
-        # Actually, SingleTurnEnv.step in verifiers might not be easily hookable
-        # to inject data *before* rubric without overriding the whole logic.
-        # However, SingleTurnEnv uses `self.dataset[self.example_id]` or similar.
+        example_id = input.get("example_id")
+        if example_id is not None and self.dataset:
+            item = self.dataset[example_id]
+            # Inject metadata into input['info'] so it flows to state/rubric
+            if "info" not in input:
+                input["info"] = {}
+            if item:
+                input["info"]["difficulty"] = item.get("difficulty")
+                input["info"]["grader"] = item.get("grader")
 
-        # Let's rely on the fact that `rubric.score_rollout` receives `state`.
-        # `state` usually contains `input` which has `example_id`.
-        # We can look up the dataset using `example_id` inside the reward function
-        # IF we have access to the dataset instance.
-        # The reward function is defined outside. We can bind the dataset to it.
-        return super().step(action)
+        return await super().rollout(input, client, model, sampling_args)
 
 def _sanity_reward(
     prompt: Any,
     completion: Any,
     answer: str,
     state: Any,
+    info: Mapping[str, Any] | None = None,
     **kwargs: Any
 ) -> float:
-    # We need access to the dataset item to know the grader and difficulty.
-    # We can attach the dataset to the function or use a closure.
-    # The `load_environment` function creates the dataset.
+    # Retrieve difficulty/grader from info
+    difficulty = "unknown"
+    grader_type = "exact"
 
-    # Retrieve dataset from the bound rubric or closure?
-    # We'll rely on `_sanity_reward` being a closure inside `load_environment`
-    # OR we attach dataset to `rubric`.
-
-    # Let's access dataset from `kwargs` if possible, but SingleTurnEnv rubric call
-    # might not pass it.
-    # However, `state` often has `rollout_input` which has `example_id`.
-    # Let's assume we can get `example_id`.
-
-    example_id = state.get("example_id")
-    if example_id is None:
-        # Fallback if example_id is missing
-        # Try finding it in info?
-        info = state.get("info", {})
-        example_id = info.get("example_id")
-
-    dataset_item = None
-    if isinstance(kwargs.get("dataset"), Dataset) and example_id is not None:
-        dataset_item = kwargs.get("dataset")[example_id]
+    if info:
+        difficulty = info.get("difficulty", "unknown")
+        grader_type = info.get("grader", "exact")
 
     # Parse completion
     parser = BasicSanityParser()
@@ -119,13 +107,6 @@ def _sanity_reward(
     prediction = parsed.get("answer", "")
 
     # Grading
-    grader_type = "exact"
-    difficulty = "unknown"
-
-    if dataset_item:
-        grader_type = dataset_item.get("grader", "exact")
-        difficulty = dataset_item.get("difficulty", "unknown")
-
     if grader_type == "numeric":
         score = grade_numeric(prediction, answer)
     else:
@@ -137,16 +118,8 @@ def _sanity_reward(
 
     state["metrics"]["is_correct"] = float(score)
 
-    # Log specific metrics that can be averaged
     if difficulty == "easy":
         state["metrics"]["easy_correct"] = float(score)
-        # We log a count so we can compute mean later if the logger supports it.
-        # If logger just averages all keys, `easy_correct` will be averaged over ALL samples
-        # (with implicit 0 or NaN?).
-        # If we return NaN for non-easy, and logger handles NaNs, great.
-        # If we return 0.0 for non-easy, the average is wrong.
-        # Tinker logger (MLFlow/WandB) usually ignores None/NaN or averages what is present.
-        # We'll set the other to None.
         state["metrics"]["hard_correct"] = None
     elif difficulty == "hard":
         state["metrics"]["hard_correct"] = float(score)
@@ -158,15 +131,7 @@ def load_environment(**kwargs):
     dataset_list = _generate_sanity_dataset()
     dataset = Dataset.from_list(dataset_list)
 
-    # Create a closure or partial to pass dataset to reward
-    # Or just use the global dataset if we trust single process, but better to be safe.
-    # We can create a class-based rubric or wrap the function.
-
-    def bound_sanity_reward(prompt, completion, answer, state, **rubric_kwargs):
-        # Inject dataset into kwargs for the inner function
-        return _sanity_reward(prompt, completion, answer, state, dataset=dataset, **rubric_kwargs)
-
-    rubric = vf.Rubric(funcs=[bound_sanity_reward])
+    rubric = vf.Rubric(funcs=[_sanity_reward])
 
     return SanityEnv(
         dataset=dataset,

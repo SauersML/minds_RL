@@ -4,8 +4,6 @@ from datasets import Dataset
 import verifiers as vf
 from evals.eval_utils import SelfPredictionParser, grade_exact
 
-# Using SelfPredictionParser from utils which handles <think>, FINAL ANSWER, CONFIDENCE
-
 def _generate_calibration_dataset(num_examples=100):
     rng = random.Random(777)
     dataset = []
@@ -54,24 +52,18 @@ def _build_rubric(parser):
         if conf is not None:
             state["metrics"]["confidence"] = float(conf)
             # Brier Score = (conf - correct)^2
-            # Here correct is 1.0 or 0.0
             brier = (float(conf) - float(score)) ** 2
             state["metrics"]["brier_score"] = brier
 
-            # ECE Note:
             # ECE requires binning over the full dataset/batch.
-            # Verifiers environment calculates per-sample metrics.
             # We log (confidence, accuracy) pairs implicitly via the logger aggregation.
             # Users can compute ECE from the logs if needed, or we rely on 'brier_score'
             # as a sufficient proxy for calibration error in this immediate context.
-            # True ECE calculation would require a stateful aggregator across the eval run.
 
         else:
-            # If no confidence provided, we can't compute Brier for this sample.
-            # We log a failure metric.
             state["metrics"]["missing_conf"] = 1.0
 
-        return float(score) # Main reward is accuracy
+        return float(score)
 
     return vf.Rubric(funcs=[calibration_metrics])
 
@@ -92,7 +84,7 @@ def load_environment(**kwargs):
     return vf.SingleTurnEnv(
         dataset=dataset,
         rubric=rubric,
-        parser=parser, # Attach parser so it's used/available
+        parser=parser,
         system_prompt=_SYSTEM_PROMPT,
         **kwargs
     )
