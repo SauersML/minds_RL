@@ -260,7 +260,7 @@ def get_token_prob(token_str: str, distribution: Dict[str, float]) -> float:
     return math.exp(max_logprob)
 
 async def _scheming_logprob_reward(
-    prompt_msgs: Any,
+    prompt: Any,
     completion: Any,
     answer: str,
     state: MutableMapping[str, Any],
@@ -281,12 +281,12 @@ async def _scheming_logprob_reward(
     try:
         # Use tokenizer template if available
         if hasattr(tokenizer, "apply_chat_template"):
-            text = tokenizer.apply_chat_template(prompt_msgs, tokenize=False, add_generation_prompt=True)
+            text = tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
             input_ids = tokenizer.encode(text, add_special_tokens=False)
         else:
             # Fallback
             text = ""
-            for m in prompt_msgs:
+            for m in prompt:
                 role = str(m.get("role", "user")).upper()
                 content = str(m.get("content", ""))
                 text += f"{role}: {content}\n"
