@@ -208,7 +208,7 @@ def _build_dataset(records: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
         dataset.append(
             {
                 "example_id": idx,
-                "prompt": item["question"],
+                # "prompt": item["question"],  # Removed to let verifiers build messages from 'question'
                 "question": item["question"],
                 "answer": item["answer"],
                 "metadata": metadata,
