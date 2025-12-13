@@ -112,7 +112,7 @@ jobs:
             num: 20
           - id: scheming
             name: "Scheming Commitment"
-            module: "evals.eval_scheming_commitment"
+            module: "evals.deception"
             num: 10
 
     env:
