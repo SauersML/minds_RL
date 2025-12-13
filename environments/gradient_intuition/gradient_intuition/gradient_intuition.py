@@ -108,8 +108,9 @@ def _extract_logprob(result: Any) -> float | None:
                     return float(first["total_logprob"])
                 if isinstance(first, (int, float)):
                     return float(first)
-        if "total_logprob" in result:
-            return float(result["total_logprob"])
+        direct_val = result.get("total_logprob") or result.get("logprob")
+        if isinstance(direct_val, (int, float)):
+            return float(direct_val)
         if "data" in result:
             return _extract_logprob(result.get("data"))
     if isinstance(result, Sequence) and not isinstance(result, (str, bytes)) and result:
@@ -117,7 +118,7 @@ def _extract_logprob(result: Any) -> float | None:
         if isinstance(first, (int, float)):
             return float(first)
         return _extract_logprob(first)
-    attr_val = getattr(result, "total_logprob", None)
+    attr_val = getattr(result, "total_logprob", getattr(result, "logprob", None))
     if isinstance(attr_val, (int, float)):
         return float(attr_val)
     attr_lp = getattr(result, "logprobs", None)
@@ -133,15 +134,27 @@ def _extract_logprob(result: Any) -> float | None:
 def _extract_logprob_sequence(result: Any) -> list[float]:
     if result is None:
         return []
+
+    def _as_float(x: Any) -> float | None:
+        if isinstance(x, (int, float)):
+            return float(x)
+        if isinstance(x, Mapping):
+            v = x.get("logprob") or x.get("total_logprob")
+            return float(v) if isinstance(v, (int, float)) else None
+        v = getattr(x, "logprob", getattr(x, "total_logprob", None))
+        return float(v) if isinstance(v, (int, float)) else None
+
     if (
         isinstance(result, Sequence)
         and not isinstance(result, (Mapping, str, bytes))
     ):
         if result:
             first = result[0]
-            if not isinstance(first, (int, float)):
+            if isinstance(first, Sequence) and not isinstance(
+                first, (Mapping, str, bytes)
+            ):
                 return _extract_logprob_sequence(first)
-        return [float(x) for x in result if isinstance(x, (int, float))]
+        return [float(v) for x in result if (v := _as_float(x)) is not None]
     if isinstance(result, Mapping):
         prompt_lp = result.get("prompt_logprobs") if hasattr(result, "get") else None
         if isinstance(prompt_lp, Sequence) and prompt_lp:
@@ -149,7 +162,7 @@ def _extract_logprob_sequence(result: Any) -> list[float]:
         if "logprobs" in result:
             lp = result.get("logprobs")
             if isinstance(lp, Sequence):
-                return [float(x) for x in lp if isinstance(x, (int, float))]
+                return [float(v) for x in lp if (v := _as_float(x)) is not None]
         if "data" in result:
             return _extract_logprob_sequence(result.get("data"))
         choices = result.get("choices")
@@ -157,7 +170,7 @@ def _extract_logprob_sequence(result: Any) -> list[float]:
             return _extract_logprob_sequence(choices[0])
     attr_lp = getattr(result, "logprobs", None)
     if isinstance(attr_lp, Sequence):
-        return [float(x) for x in attr_lp if isinstance(x, (int, float))]
+        return [float(v) for x in attr_lp if (v := _as_float(x)) is not None]
     attr_data = getattr(result, "data", None)
     if attr_data is not None:
         return _extract_logprob_sequence(attr_data)
