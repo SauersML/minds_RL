@@ -305,7 +305,7 @@ class GradientIntuitionRLDatasetBuilder(RLDatasetBuilder):
             def _factory(i: int = idx, seed_val: int = env_seed) -> Env:
                 rebuilt = builder.build(
                     sampling_client=None,
-                    service_client=shadow_service_client,
+                    service_client=service_client,
                     base_model=self.model_name,
                     training_client=None,
                 )
