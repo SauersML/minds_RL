@@ -131,7 +131,7 @@ jobs:
       # 1. BASELINE EVALUATION
       # ---------------------------------------------------------
       
-      - name: Base Model - Static Math (Calibration)
+      - name: Base Model - Static Math (Accuracy)
         run: |
           echo "Running Static Math on Base Model..."
           set +e
@@ -143,6 +143,20 @@ jobs:
             > results/base_math.log 2>&1
           EXIT_CODE=$?
           cat results/base_math.log
+          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
+
+      - name: Base Model - Calibration Static (Confidence)
+        run: |
+          echo "Running Calibration Static on Base Model..."
+          set +e
+          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+            vf_env_id="evals.eval_calibration_static" \
+            model_name="${{ inputs.base_model }}" \
+            num_examples=50 \
+            rollouts_per_example=1 \
+            > results/base_calibration.log 2>&1
+          EXIT_CODE=$?
+          cat results/base_calibration.log
           [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
 
       - name: Base Model - Frozen Ghost (Grounding)
@@ -177,7 +191,7 @@ jobs:
       # 2. CHECKPOINT EVALUATION
       # ---------------------------------------------------------
 
-      - name: Checkpoint - Static Math (Calibration)
+      - name: Checkpoint - Static Math (Accuracy)
         run: |
           echo "Running Static Math on Checkpoint..."
           set +e
@@ -189,6 +203,20 @@ jobs:
             > results/ckpt_math.log 2>&1
           EXIT_CODE=$?
           cat results/ckpt_math.log
+          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
+
+      - name: Checkpoint - Calibration Static (Confidence)
+        run: |
+          echo "Running Calibration Static on Checkpoint..."
+          set +e
+          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+            vf_env_id="evals.eval_calibration_static" \
+            model_path="${{ env.CHECKPOINT_PATH }}" \
+            num_examples=50 \
+            rollouts_per_example=1 \
+            > results/ckpt_calibration.log 2>&1
+          EXIT_CODE=$?
+          cat results/ckpt_calibration.log
           [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
 
       - name: Checkpoint - Frozen Ghost (Grounding)
@@ -227,15 +255,20 @@ jobs:
         if: always()
         run: |
           echo " 🧪 Eval Science Report" >> $GITHUB_STEP_SUMMARY
-          echo " 1. Calibration (Static Math)" >> $GITHUB_STEP_SUMMARY
+          
+          echo " 1. Accuracy (Static Math)" >> $GITHUB_STEP_SUMMARY
           echo "Base: $(grep 'reward: avg' results/base_math.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
           echo "Ckpt: $(grep 'reward: avg' results/ckpt_math.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+
+          echo " 2. Confidence (Calibration Static)" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $(grep 'reward: avg' results/base_calibration.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "Ckpt: $(grep 'reward: avg' results/ckpt_calibration.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
           
-          echo " 2. Grounding (Frozen Ghost)" >> $GITHUB_STEP_SUMMARY
+          echo " 3. Grounding (Frozen Ghost)" >> $GITHUB_STEP_SUMMARY
           echo "Base: $(grep 'reward: avg' results/base_ghost.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
           echo "Ckpt: $(grep 'reward: avg' results/ckpt_ghost.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
           
-          echo " 3. Safety (Sanity Check)" >> $GITHUB_STEP_SUMMARY
+          echo " 4. Safety (Sanity Check)" >> $GITHUB_STEP_SUMMARY
           echo "Base: $(grep 'reward: avg' results/base_sanity.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
           echo "Ckpt: $(grep 'reward: avg' results/ckpt_sanity.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
 
