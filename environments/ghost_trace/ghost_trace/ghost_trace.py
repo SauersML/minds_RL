@@ -37,7 +37,7 @@ def _build_dataset(count: int = 5000, *, seed: int | None = None) -> list[dict[s
             {
                 "example_id": idx,
                 "question": prompt_template.format(target_word=target_word.capitalize()),
-                "metadata": {"target_word": target_word},
+                "info": {"target_word": target_word},
             }
         )
     return dataset
@@ -131,8 +131,17 @@ async def _communication_reward(
         if isinstance(candidate, Mapping):
             sample = candidate
 
-    metadata = sample.get("metadata") if isinstance(sample, Mapping) else None
-    target_word = metadata.get("target_word") if isinstance(metadata, Mapping) else None
+    target_word = None
+    if isinstance(sample, Mapping):
+        # Check both info (new) and metadata (legacy) keys in sample
+        source = sample.get("info") or sample.get("metadata")
+        if isinstance(source, Mapping):
+            target_word = source.get("target_word")
+
+    # Fallback: Check info directly (populated during evaluation)
+    if not target_word and isinstance(info, Mapping):
+        target_word = info.get("target_word")
+
     if not target_word:
         raise ValueError("Ghost Trace Error: 'target_word' missing from sample metadata.")
 
