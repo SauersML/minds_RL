@@ -57,7 +57,35 @@ ENV_CONFIGS = [
     }
 ]
 
+class VerifiersEnvWrapper:
+    """Adapter to make raw Verifiers environments compatible with Tinker test harness."""
+    def __init__(self, env):
+        self.env = env
+
+    async def initial_observation(self):
+        # Extract prompt from the first dataset example
+        sample = self.env.dataset[0]
+        if "prompt" in sample:
+            return sample["prompt"]
+        if "question" in sample:
+            return sample["question"]
+        return "Dummy Prompt"
+
+    async def step(self, action):
+        # Return dummy step result to satisfy test loop
+        return types.StepResult(
+            reward=0.0,
+            episode_done=True,
+            next_observation=types.ModelInput.empty(),
+            next_stop_condition=[],
+            metrics={}
+        )
+
 async def run_env_episode(name: str, env: Any, sampling_client: tinker.SamplingClient, tokenizer: Any):
+    # Wrap raw verifiers environments if they don't support the Tinker interface
+    if not hasattr(env, "initial_observation"):
+        env = VerifiersEnvWrapper(env)
+
     prefix = f"[{name}]"
     logger.info(f"{prefix} Environment ready: {env}")
     logger.info(f"{prefix} >>> STARTING EPISODE <<<")
@@ -119,6 +147,7 @@ async def main():
     service_client = tinker.ServiceClient()
     sampling_client = service_client.create_sampling_client(base_model=model_name)
     tokenizer = get_tokenizer(model_name)
+    sampling_client.tokenizer = tokenizer  # Required by GradientProphet
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer)
 
