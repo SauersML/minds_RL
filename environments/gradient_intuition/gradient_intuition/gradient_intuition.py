@@ -90,8 +90,16 @@ async def _maybe_await(value: Any) -> Any:
 def _extract_logprob(result: Any) -> float | None:
     if result is None:
         return None
+    loss_fn_outputs = getattr(result, "loss_fn_outputs", None)
+    if (
+        loss_fn_outputs is not None
+        and isinstance(loss_fn_outputs, Sequence)
+        and len(loss_fn_outputs) > 0
+    ):
+        return _extract_logprob(loss_fn_outputs[0])
     if isinstance(result, Mapping):
         prompt_lp = result.get("prompt_logprobs") if hasattr(result, "get") else None
+        
         if isinstance(prompt_lp, Sequence) and prompt_lp:
             for entry in reversed(prompt_lp):
                 if isinstance(entry, Mapping):
@@ -135,6 +143,17 @@ def _extract_logprob_sequence(result: Any) -> list[float]:
     if result is None:
         return []
 
+    loss_fn_outputs = getattr(result, "loss_fn_outputs", None)
+    if (
+        loss_fn_outputs is not None
+        and isinstance(loss_fn_outputs, Sequence)
+        and len(loss_fn_outputs) > 0
+    ):
+        return _extract_logprob_sequence(loss_fn_outputs[0])
+
+    if hasattr(result, "data") and isinstance(result.data, list):
+        return [float(x) for x in result.data if isinstance(x, (int, float))]
+
     def _as_float(x: Any) -> float | None:
         if isinstance(x, (int, float)):
             return float(x)
@@ -161,6 +180,8 @@ def _extract_logprob_sequence(result: Any) -> list[float]:
             return [float(x) for x in prompt_lp if isinstance(x, (int, float))]
         if "logprobs" in result:
             lp = result.get("logprobs")
+            if hasattr(lp, "data") and isinstance(lp.data, list):
+                return [float(x) for x in lp.data if isinstance(x, (int, float))]
             if isinstance(lp, Sequence):
                 return [float(v) for x in lp if (v := _as_float(x)) is not None]
         if "data" in result:
@@ -176,10 +197,18 @@ def _extract_logprob_sequence(result: Any) -> list[float]:
         return _extract_logprob_sequence(attr_data)
     return []
 
-
 def _extract_loss(result: Any) -> float | None:
     if result is None:
         return None
+
+    loss_fn_outputs = getattr(result, "loss_fn_outputs", None)
+    if (
+        loss_fn_outputs is not None
+        and isinstance(loss_fn_outputs, Sequence)
+        and len(loss_fn_outputs) > 0
+    ):
+        return _extract_loss(loss_fn_outputs[0])
+
     if isinstance(result, Sequence) and not isinstance(result, (str, bytes, Mapping)):
         if result:
             return _extract_loss(result[0])
