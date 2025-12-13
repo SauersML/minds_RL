@@ -36,7 +36,7 @@ def _build_dataset(count: int = 5000, *, seed: int | None = None) -> list[dict[s
         dataset.append(
             {
                 "example_id": idx,
-                "prompt": prompt_template.format(target_word=target_word.capitalize()),
+                "question": prompt_template.format(target_word=target_word.capitalize()),
                 "info": {"target_word": target_word},
             }
         )
