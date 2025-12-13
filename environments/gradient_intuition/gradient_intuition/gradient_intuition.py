@@ -177,6 +177,32 @@ def _extract_logprob_sequence(result: Any) -> list[float]:
     return []
 
 
+def _extract_loss(result: Any) -> float | None:
+    if result is None:
+        return None
+    if isinstance(result, Sequence) and not isinstance(result, (str, bytes, Mapping)):
+        if result:
+            return _extract_loss(result[0])
+        return None
+
+    if isinstance(result, Mapping):
+        val = result.get("loss")
+        if isinstance(val, (int, float)):
+            return float(val)
+        if "data" in result:
+            return _extract_loss(result["data"])
+
+    val = getattr(result, "loss", None)
+    if isinstance(val, (int, float)):
+        return float(val)
+
+    data = getattr(result, "data", None)
+    if data is not None:
+        return _extract_loss(data)
+
+    return None
+
+
 class _ShadowClientManager:
     def __init__(
         self,
@@ -497,7 +523,9 @@ class GradientIntuitionEnv(Env):
             return None
         input_tokens = np.array(tokens[:-1], dtype=np.int64)
         target_tokens = np.array(tokens[1:], dtype=np.int64)
-        weights = np.ones_like(target_tokens, dtype=np.float32)
+        weights = np.zeros_like(target_tokens, dtype=np.float32)
+        if len(answer_tokens) > 0:
+            weights[-len(answer_tokens) :] = 1.0
         datum = tinker.Datum(
             model_input=tinker.ModelInput.from_ints(input_tokens.tolist()),
             loss_fn_inputs={
@@ -526,7 +554,15 @@ class GradientIntuitionEnv(Env):
             return float(sum(logprob_seq[-len(answer_tokens) :]))
 
         lp = _extract_logprob(result)
-        return float(lp) if lp is not None else None
+        if lp is not None:
+            return float(lp)
+
+        loss = _extract_loss(result)
+        if loss is not None:
+            # loss is avg NLL over answer tokens (due to weights)
+            return float(-loss * len(answer_tokens))
+
+        return None
 
     async def _ensure_shadow_client(self, *, reset: bool = False) -> Any:
         if reset:
