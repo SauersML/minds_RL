@@ -78,53 +78,50 @@ async def main():
         logger.error("Builder returned no environments!")
         sys.exit(1)
         
-    env = envs[0]
-    logger.info(f"Environment ready: {env}")
+    # 7. Run Episodes
+    async def run_episode(index: int, env):
+        prefix = f"[Env {index}]"
+        logger.info(f"{prefix} Environment ready: {env}")
+        logger.info(f"{prefix} >>> STARTING EPISODE <<<")
+        
+        # A. Initial Observation
+        logger.info(f"{prefix} Getting initial observation...")
+        obs, stop_conditions = await env.initial_observation()
+        
+        obs_tokens = obs.to_ints()
+        obs_text = tokenizer.decode(obs_tokens)
+        logger.info(f"{prefix} Observation (len={len(obs_tokens)}):\n{'-'*40}\n{obs_text}\n{'-'*40}")
 
-    # 7. Run Episode
-    logger.info(">>> STARTING EPISODE <<<")
-    
-    # A. Initial Observation
-    logger.info("Getting initial observation...")
-    obs, stop_conditions = await env.initial_observation()
-    
-    obs_tokens = obs.to_ints()
-    obs_text = tokenizer.decode(obs_tokens)
-    logger.info(f"Observation (len={len(obs_tokens)}):")
-    logger.info("-" * 40)
-    logger.info(obs_text)
-    logger.info("-" * 40)
+        # B. Agent Action (REAL INFERENCE)
+        logger.info(f"{prefix} Querying Model for Action...")
+        sampling_params = types.SamplingParams(
+            max_tokens=128,
+            temperature=0.7,
+            stop=stop_conditions
+        )
+        
+        response = await sampling_client.sample_async(
+            prompt=obs,
+            num_samples=1,
+            sampling_params=sampling_params
+        )
+        
+        action_tokens = response.sequences[0].tokens
+        action_text = tokenizer.decode(action_tokens)
+        
+        logger.info(f"{prefix} Agent Action (len={len(action_tokens)}):\n{'-'*40}\n{action_text}\n{'-'*40}")
 
-    # B. Agent Action (REAL INFERENCE)
-    logger.info("Querying Model for Action...")
-    sampling_params = types.SamplingParams(
-        max_tokens=128,
-        temperature=0.7,
-        stop=stop_conditions
-    )
-    
-    response = await sampling_client.sample_async(
-        prompt=obs,
-        num_samples=1,
-        sampling_params=sampling_params
-    )
-    
-    action_tokens = response.sequences[0].tokens
-    action_text = tokenizer.decode(action_tokens)
-    
-    logger.info(f"Agent Action (len={len(action_tokens)}):")
-    logger.info("-" * 40)
-    logger.info(action_text)
-    logger.info("-" * 40)
+        # C. Environment Step
+        logger.info(f"{prefix} Stepping Environment...")
+        step_result = await env.step(action_tokens)
+        
+        logger.info(f"{prefix} >>> STEP RESULT <<<")
+        logger.info(f"{prefix} Reward: {step_result.reward}")
+        logger.info(f"{prefix} Done: {step_result.episode_done}")
+        logger.info(f"{prefix} Metrics: {step_result.metrics}")
 
-    # C. Environment Step
-    logger.info("Stepping Environment...")
-    step_result = await env.step(action_tokens)
-    
-    logger.info(">>> STEP RESULT <<<")
-    logger.info(f"Reward: {step_result.reward}")
-    logger.info(f"Done: {step_result.episode_done}")
-    logger.info(f"Metrics: {step_result.metrics}")
+    logger.info(f"Running {len(envs)} environments concurrently...")
+    await asyncio.gather(*(run_episode(i, env) for i, env in enumerate(envs)))
     
     logger.info("TEST COMPLETED SUCCESSFULLY")
 
