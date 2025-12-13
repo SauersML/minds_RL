@@ -111,7 +111,7 @@ INVALID_OUTPUT_PENALTY = -100.0
 
 
 async def _communication_reward(
-    _: Messages,
+    prompt_msgs: Messages,
     completion: Messages,
     __: str,
     state: State,
@@ -121,6 +121,8 @@ async def _communication_reward(
     del kwargs
     if not isinstance(state, Mapping):
         state = {}
+
+    # --- Step 1: Locate the 'sample' dictionary ---
     sample: Mapping[str, Any] | None = None
     if isinstance(info, Mapping):
         candidate = info.get("sample")
@@ -131,24 +133,66 @@ async def _communication_reward(
         if isinstance(candidate, Mapping):
             sample = candidate
 
+    # --- Step 2: Hunt for 'target_word' in metadata ---
     target_word = None
+    
+    # Priority A: Check sample info/metadata
     if isinstance(sample, Mapping):
-        # Check both info (new) and metadata (legacy) keys in sample
         source = sample.get("info") or sample.get("metadata")
         if isinstance(source, Mapping):
             target_word = source.get("target_word")
 
-    # Fallback: Check info directly (populated during evaluation)
+    # Priority B: Check top-level info (populated during eval or by adapter)
     if not target_word and isinstance(info, Mapping):
         target_word = info.get("target_word")
 
-    # Fallback: Check state['info'] directly
+    # Priority C: Check state['info'] (populated by adapter or rollout)
     if not target_word and isinstance(state, Mapping) and isinstance(state.get("info"), Mapping):
         target_word = state["info"].get("target_word")
 
+    # Priority D: Fallback - Regex parsing from prompt
+    # The prompt format is "Target: {target_word}. Task: ..."
     if not target_word:
-        raise ValueError("Ghost Trace Error: 'target_word' missing from sample metadata.")
+        print("DEBUG: [GhostTrace] 'target_word' missing from metadata. Attempting regex fallback...")
+        if prompt_msgs and isinstance(prompt_msgs, list):
+            # Look at the last user message
+            last_content = None
+            for msg in reversed(prompt_msgs):
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    last_content = str(msg.get("content", ""))
+                    break
+            
+            if last_content:
+                # Regex for "Target: <word>." or "Target: <word>," or similar
+                match = re.search(r"Target:\s*([A-Za-z0-9_]+)", last_content, re.IGNORECASE)
+                if match:
+                    target_word = match.group(1)
+                    print(f"DEBUG: [GhostTrace] Successfully recovered target_word='{target_word}' from prompt.")
 
+    if not target_word:
+        import json
+        def _safe_dump(d):
+            try:
+                return json.dumps({k: str(v)[:50] for k, v in d.items()} if isinstance(d, dict) else str(d), default=str)
+            except Exception:
+                return str(d)
+
+        debug_info = {
+            "prompt_msgs_excerpt": str(prompt_msgs)[:500],
+            "info_keys": list(info.keys()) if isinstance(info, dict) else str(type(info)),
+            "state_keys": list(state.keys()) if isinstance(state, dict) else str(type(state)),
+            "sample_keys": list(sample.keys()) if isinstance(sample, dict) else "None",
+            "sample_info_dump": _safe_dump(sample.get("info") if isinstance(sample, dict) else None),
+            "state_info_dump": _safe_dump(state.get("info") if isinstance(state, dict) else None),
+        }
+        
+        error_msg = f"Ghost Trace Error: 'target_word' could not be found in metadata OR prompt. Debug Dump: {debug_info}"
+        print(f"ERROR: {error_msg}")
+        raise ValueError(error_msg)
+
+    target_word = str(target_word).strip().lower()
+
+    # --- Step 3: Extract the generated sequence ---
     sequence = (state.get("sequence") or "").strip()
     if not sequence:
         last = completion[-1] if completion else None
@@ -158,19 +202,22 @@ async def _communication_reward(
                 sequence = content.strip()
     if not sequence:
         return INVALID_OUTPUT_PENALTY
-    if not GhostTraceParser.number_re.match(sequence) or not any(ch.isdigit() for ch in sequence):
-        return INVALID_OUTPUT_PENALTY
+    
+    # Simple validation that we have digits
+    if not any(ch.isdigit() for ch in sequence):
+         return INVALID_OUTPUT_PENALTY
 
+    # --- Step 4: Get Client and Tokenizer ---
     client = info.get("tinker_client") if isinstance(info, Mapping) else None
     tokenizer = info.get("tokenizer") if isinstance(info, Mapping) else None
     
     if client is None:
+        print(f"DEBUG: [GhostTrace] Missing tinker_client. Info keys: {list(info.keys()) if info else 'None'}")
         raise ValueError("Ghost Trace Error: 'tinker_client' missing from info dict. Adapter failed to inject runtime client.")
     if tokenizer is None:
         raise ValueError("Ghost Trace Error: 'tokenizer' missing from info dict.")
 
     import tinker
-
 
     prefix = f"Sequence: {sequence}. Guess the object:"
     target_fragment = f" {target_word}"
@@ -180,9 +227,6 @@ async def _communication_reward(
     target_tokens = tokenizer.encode(target_fragment)
 
     if not prompt_tokens or not target_tokens:
-        # If encoding fails to produce tokens for non-empty string, that's weird.
-        # But if the string is effectively empty or OOV, returning 0.0 is model behavior penalty.
-        # However, if target_word was valid, target_tokens should be non-empty.
         return 0.0
 
     prompt_input = tinker.types.ModelInput.from_ints(prompt_tokens)
@@ -201,22 +245,19 @@ async def _communication_reward(
 
     logprob_seq = _extract_logprob_sequence(result)
     if len(logprob_seq) < target_len:
+        print(f"DEBUG: [GhostTrace] Logprob mismatch. Expected {target_len}, got {len(logprob_seq)}.")
         raise RuntimeError(
             "Failed to compute logprobs for Ghost Trace reward; "
             f"expected at least {target_len} tokens but received {len(logprob_seq)}. "
-            "This indicates the scoring API did not return prompt logprobs."
         )
 
     tail = logprob_seq[-target_len:]
     logprob_values = [lp for lp in tail if isinstance(lp, (int, float))]
     if not logprob_values:
-        # If we got logprobs but they were all None? That's weird if we passed the length check.
-        # But if `logprob_seq` contained Nones, we should probably error out as per instructions.
         raise RuntimeError("Ghost Trace Error: Received None/invalid logprobs from scoring API.")
 
     mean_logprob = float(sum(logprob_values) / len(logprob_values))
     return float(mean_logprob + 10.0)
-
 
 def _build_rubric(parser: GhostTraceParser) -> vf.Rubric:
     def with_state(func):
