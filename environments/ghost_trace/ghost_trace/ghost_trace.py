@@ -275,9 +275,9 @@ class GhostTraceEnv(vf.SingleTurnEnv):
             sample = {}
 
         self.state = {"sample": sample}
-
         prompt = sample.get("prompt") or sample.get("question") or ""
-        return str(prompt)
+        return [{"role": "user", "content": str(prompt)}]
+
 
     async def rollout(
         self,
