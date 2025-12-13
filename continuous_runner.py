@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import tinker
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.rl import train
 from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder
@@ -37,6 +38,33 @@ except ImportError:
 # -----------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
+
+# --- Helper for robust saving ---
+async def save_checkpoint_async(**kwargs):
+    """
+    Wraps save_checkpoint_async. If a checkpoint name collision occurs
+    (server has it, but we don't), retry with suffixes _1, _2, etc.
+    """
+    base_name = kwargs.get("name", "ckpt")
+    
+    # Try exact name first
+    try:
+        return await checkpoint_utils.save_checkpoint_async(**kwargs)
+    except tinker.ConflictError:
+        print(f"⚠️ Conflict: Checkpoint '{base_name}' exists on server. Attempting resolution...")
+
+    # Iterate until we find a free slot
+    for i in range(1, 1000):
+        new_name = f"{base_name}_{i}"
+        print(f"🔄 Retrying save as: '{new_name}'")
+        kwargs["name"] = new_name
+        try:
+            return await checkpoint_utils.save_checkpoint_async(**kwargs)
+        except tinker.ConflictError:
+            continue # Name taken, try next
+            
+    raise RuntimeError(f"Could not save checkpoint '{base_name}' after 1000 attempts.")
+# --------------------------------
 
 def _install_advantage_normalization() -> None:
     # Tinker automatically centers advantages within each TrajectoryGroup.
@@ -243,7 +271,7 @@ def _install_deadline_guard(stop_time: float | None) -> None:
         env_group_builders_queue = asyncio.Queue(maxsize=cfg.async_config.groups_per_batch)
         trajectory_groups_queue = asyncio.Queue()
 
-        path_dict = await checkpoint_utils.save_checkpoint_async(
+        path_dict = await save_checkpoint_async(
             training_client=training_client,
             name=f"{start_batch:06d}",
             log_path=cfg.log_path,
@@ -322,7 +350,7 @@ def _install_deadline_guard(stop_time: float | None) -> None:
 
                 # PERIODIC CHECKPOINT
                 if i_batch > 0 and i_batch % cfg.save_every == 0:
-                    await checkpoint_utils.save_checkpoint_async(
+                    await save_checkpoint_async(
                         training_client=training_client,
                         name=f"{i_batch:06d}",
                         log_path=cfg.log_path,
@@ -435,7 +463,7 @@ def _deadline_reached(stop_time: float) -> bool:
 
 async def _save_checkpoint_on_deadline(training_client, log_path, i_batch) -> None:
     print(f"Deadline reached at batch {i_batch}. Saving checkpoint and exiting...")
-    await checkpoint_utils.save_checkpoint_async(
+    await save_checkpoint_async(
         training_client=training_client,
         name=f"{i_batch:06d}_deadline",
         log_path=log_path,
