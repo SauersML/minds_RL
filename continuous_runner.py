@@ -580,6 +580,11 @@ def main() -> None:
 
     initial_checkpoint = _load_last_state_checkpoint(log_root / master_config.stem)
 
+    if initial_checkpoint:
+        print(f"🚀 Resuming training from checkpoint: {initial_checkpoint}")
+    else:
+        print("🌱 No previous checkpoint found. Starting training from scratch.")
+
     cfg = RunnerConfig(
         config_path=master_config,
         log_root=log_root,
