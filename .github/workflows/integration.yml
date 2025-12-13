@@ -40,7 +40,7 @@ jobs:
         # We explicitly install the real SDKs here.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ruff pytest
+          python -m pip install pytest
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
           # Install the Real Tinker SDK and Cookbook
