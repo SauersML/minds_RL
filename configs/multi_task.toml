@@ -1,10 +1,10 @@
 [trainer]
-rollouts_per_example = 8
-groups_per_batch = 8
+rollouts_per_example = 16
+groups_per_batch = 64
 loss_fn = "importance_sampling"
-save_every = 50
+save_every = 10
 eval_every = 200
-total_batches = 100000
+total_batches = 50000
 stream_minibatches = 8
 
   [trainer.args]
