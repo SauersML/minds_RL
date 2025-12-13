@@ -12,60 +12,22 @@ on:
         required: true
 
 jobs:
-  run-science-evals:
+  # 1. Resolve Configuration (Runs Once)
+  resolve-config:
     runs-on: ubuntu-latest
-    env:
-      TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
-      TOKENIZERS_PARALLELISM: "false"
-
+    outputs:
+      checkpoint_path: ${{ steps.resolve.outputs.path }}
+      base_model: ${{ inputs.base_model }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-    
-      - name: Install System Dependencies
-        run: |
-          pip install uv
-          uv pip install --system torch --index-url https://download.pytorch.org/whl/cpu
-          uv pip install --system tinker tinker-cookbook verifiers
-
-      - name: Install Local Environment Packages
-        run: |
-          # Evaluation scripts in evals/ depend on modules in environments/
-          # We must install these local directories as editable packages.
-          python - <<'PY'
-          import subprocess
-          import sys
-          from pathlib import Path
-
-          envs_dir = Path("environments")
-          if not envs_dir.exists():
-              print("No environments directory found.")
-              sys.exit(0)
-
-          for env_dir in sorted(envs_dir.iterdir()):
-              if (env_dir / "pyproject.toml").exists():
-                  print(f"Installing env package: {env_dir.name}")
-                  subprocess.check_call([
-                      sys.executable,
-                      "-m",
-                      "pip",
-                      "install",
-                      "-e",
-                      str(env_dir),
-                  ])
-          PY
 
       - name: Resolve Checkpoint Path
         id: resolve
         run: |
           if [ -n "${{ inputs.checkpoint_path }}" ]; then
             echo "Using manual input checkpoint."
-            echo "CHECKPOINT_PATH=${{ inputs.checkpoint_path }}" >> $GITHUB_ENV
+            echo "path=${{ inputs.checkpoint_path }}" >> $GITHUB_OUTPUT
           else
             echo "Resolving latest checkpoint from repository state..."
 
@@ -74,10 +36,10 @@ jobs:
               exit 1
             fi
 
-            RUN_ID=$(python -c "import json; print(json.load(open('run_state.json'))['run_id'])")
+            RUN_ID=$(python3 -c "import json; print(json.load(open('run_state.json'))['run_id'])")
             echo "Found Run ID: $RUN_ID"
 
-            # Find the file anywhere inside the run folder
+            # Find the checkpoints file anywhere inside the run folder
             CKPT_FILE=$(find "outputs/$RUN_ID" -name "checkpoints.jsonl" | head -n 1)
 
             if [ -z "$CKPT_FILE" ]; then
@@ -87,8 +49,8 @@ jobs:
 
             echo "Reading from: $CKPT_FILE"
 
-            # Robust parsing using textwrap to handle records cleanly
-            SAMPLER_PATH=$(python -c "import sys, json, textwrap; \
+            # Robust parsing to find the last valid sampler_path
+            SAMPLER_PATH=$(python3 -c "import sys, json, textwrap; \
             exec(textwrap.dedent('''
               try:
                 with open(sys.argv[1]) as f:
@@ -121,192 +83,180 @@ jobs:
             fi
 
             echo "Resolved latest checkpoint: $SAMPLER_PATH"
-            echo "CHECKPOINT_PATH=$SAMPLER_PATH" >> $GITHUB_ENV
+            echo "path=$SAMPLER_PATH" >> $GITHUB_OUTPUT
           fi
+
+  # 2. Parallel Evaluation (Runs 5x Simultaneous Jobs)
+  evaluate:
+    needs: resolve-config
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: math
+            name: "Static Math"
+            module: "evals.eval_math_static"
+            num: 50
+          - id: calibration
+            name: "Calibration"
+            module: "evals.eval_calibration_static"
+            num: 50
+          - id: ghost
+            name: "Frozen Ghost"
+            module: "evals.eval_ghost_static"
+            num: 20
+          - id: sanity
+            name: "Sanity Check"
+            module: "evals.eval_sanity_check"
+            num: 20
+          - id: scheming
+            name: "Scheming Commitment"
+            module: "evals.eval_scheming_commitment"
+            num: 10
+
+    env:
+      TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
+      TOKENIZERS_PARALLELISM: "false"
+      CHECKPOINT_PATH: ${{ needs.resolve-config.outputs.checkpoint_path }}
+      BASE_MODEL: ${{ needs.resolve-config.outputs.base_model }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+    
+      - name: Install System Dependencies
+        run: |
+          pip install uv
+          uv pip install --system torch --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --system tinker tinker-cookbook verifiers
+
+      - name: Install Local Environment Packages
+        run: |
+          python - <<'PY'
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          envs_dir = Path("environments")
+          if not envs_dir.exists():
+              print("No environments directory found.")
+              sys.exit(0)
+
+          for env_dir in sorted(envs_dir.iterdir()):
+              if (env_dir / "pyproject.toml").exists():
+                  print(f"Installing env package: {env_dir.name}")
+                  subprocess.check_call([
+                      sys.executable,
+                      "-m",
+                      "pip",
+                      "install",
+                      "-e",
+                      str(env_dir),
+                  ])
+          PY
 
       - name: Create Results Directory
         run: mkdir -p results
 
-      # ---------------------------------------------------------
-      # 1. BASELINE EVALUATION
-      # ---------------------------------------------------------
-      
-      - name: Base Model - Static Math (Accuracy)
+      - name: Eval Base Model (${{ matrix.name }})
         run: |
-          echo "Running Static Math on Base Model..."
+          echo "Running ${{ matrix.name }} on Base Model..."
           set +e
           python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="evals.eval_math_static" \
-            model_name="${{ inputs.base_model }}" \
-            num_examples=50 \
+            vf_env_id="${{ matrix.module }}" \
+            model_name="${{ env.BASE_MODEL }}" \
+            num_examples=${{ matrix.num }} \
             rollouts_per_example=1 \
-            > results/base_math.log 2>&1
+            > results/base_${{ matrix.id }}.log 2>&1
           EXIT_CODE=$?
-          cat results/base_math.log
-          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
+          cat results/base_${{ matrix.id }}.log
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "::error::Base model eval failed for ${{ matrix.name }}"
+            exit $EXIT_CODE
+          fi
 
-      - name: Base Model - Calibration Static (Confidence)
+      - name: Eval Checkpoint (${{ matrix.name }})
         run: |
-          echo "Running Calibration Static on Base Model..."
+          echo "Running ${{ matrix.name }} on Checkpoint..."
           set +e
           python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="evals.eval_calibration_static" \
-            model_name="${{ inputs.base_model }}" \
-            num_examples=50 \
-            rollouts_per_example=1 \
-            > results/base_calibration.log 2>&1
-          EXIT_CODE=$?
-          cat results/base_calibration.log
-          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
-
-      - name: Base Model - Frozen Ghost (Grounding)
-        run: |
-          echo "Running Frozen Ghost on Base Model..."
-          set +e
-          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="evals.eval_ghost_static" \
-            model_name="${{ inputs.base_model }}" \
-            num_examples=20 \
-            rollouts_per_example=1 \
-            > results/base_ghost.log 2>&1
-          EXIT_CODE=$?
-          cat results/base_ghost.log
-          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
-
-      - name: Base Model - Sanity Check (Regression)
-        run: |
-          echo "Running Sanity Check on Base Model..."
-          set +e
-          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="evals.eval_sanity_check" \
-            model_name="${{ inputs.base_model }}" \
-            num_examples=20 \
-            rollouts_per_example=1 \
-            > results/base_sanity.log 2>&1
-          EXIT_CODE=$?
-          cat results/base_sanity.log
-          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
-
-      - name: Base Model - Scheming Commitment (Safety)
-        run: |
-          echo "Running Scheming Commitment on Base Model..."
-          set +e
-          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="evals.eval_scheming_commitment" \
-            model_name="${{ inputs.base_model }}" \
-            num_examples=10 \
-            rollouts_per_example=1 \
-            > results/base_scheming.log 2>&1
-          EXIT_CODE=$?
-          cat results/base_scheming.log
-          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
-
-      # ---------------------------------------------------------
-      # 2. CHECKPOINT EVALUATION
-      # ---------------------------------------------------------
-
-      - name: Checkpoint - Static Math (Accuracy)
-        run: |
-          echo "Running Static Math on Checkpoint..."
-          set +e
-          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="evals.eval_math_static" \
+            vf_env_id="${{ matrix.module }}" \
             model_path="${{ env.CHECKPOINT_PATH }}" \
-            num_examples=50 \
+            num_examples=${{ matrix.num }} \
             rollouts_per_example=1 \
-            > results/ckpt_math.log 2>&1
+            > results/ckpt_${{ matrix.id }}.log 2>&1
           EXIT_CODE=$?
-          cat results/ckpt_math.log
-          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
+          cat results/ckpt_${{ matrix.id }}.log
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "::error::Checkpoint eval failed for ${{ matrix.name }}"
+            exit $EXIT_CODE
+          fi
 
-      - name: Checkpoint - Calibration Static (Confidence)
-        run: |
-          echo "Running Calibration Static on Checkpoint..."
-          set +e
-          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="evals.eval_calibration_static" \
-            model_path="${{ env.CHECKPOINT_PATH }}" \
-            num_examples=50 \
-            rollouts_per_example=1 \
-            > results/ckpt_calibration.log 2>&1
-          EXIT_CODE=$?
-          cat results/ckpt_calibration.log
-          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.id }}
+          path: results/*.log
 
-      - name: Checkpoint - Frozen Ghost (Grounding)
-        run: |
-          echo "Running Frozen Ghost on Checkpoint..."
-          set +e
-          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="evals.eval_ghost_static" \
-            model_path="${{ env.CHECKPOINT_PATH }}" \
-            num_examples=20 \
-            rollouts_per_example=1 \
-            > results/ckpt_ghost.log 2>&1
-          EXIT_CODE=$?
-          cat results/ckpt_ghost.log
-          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
+  # 3. Generate Report (Aggregates All Logs)
+  generate-report:
+    needs: [resolve-config, evaluate]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          merge-multiple: true
+          path: results
 
-      - name: Checkpoint - Sanity Check (Regression)
-        run: |
-          echo "Running Sanity Check on Checkpoint..."
-          set +e
-          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="evals.eval_sanity_check" \
-            model_path="${{ env.CHECKPOINT_PATH }}" \
-            num_examples=20 \
-            rollouts_per_example=1 \
-            > results/ckpt_sanity.log 2>&1
-          EXIT_CODE=$?
-          cat results/ckpt_sanity.log
-          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
-
-      - name: Checkpoint - Scheming Commitment (Safety)
-        run: |
-          echo "Running Scheming Commitment on Checkpoint..."
-          set +e
-          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="evals.eval_scheming_commitment" \
-            model_path="${{ env.CHECKPOINT_PATH }}" \
-            num_examples=10 \
-            rollouts_per_example=1 \
-            > results/ckpt_scheming.log 2>&1
-          EXIT_CODE=$?
-          cat results/ckpt_scheming.log
-          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
-
-      # ---------------------------------------------------------
-      # 3. REPORTING
-      # ---------------------------------------------------------
+      - name: List Results
+        run: ls -R results
 
       - name: Generate Science Summary
-        if: always()
         run: |
           echo " 🧪 Eval Science Report" >> $GITHUB_STEP_SUMMARY
-          echo "Evaluated Checkpoint: \`${{ env.CHECKPOINT_PATH }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "Evaluated Checkpoint: \`${{ needs.resolve-config.outputs.checkpoint_path }}\`" >> $GITHUB_STEP_SUMMARY
           
+          # Helper function to safely grep score
+          get_score() {
+            local file=$1
+            if [ -f "$file" ]; then
+              grep 'reward: avg' "$file" || echo 'N/A'
+            else
+              echo 'Missing Log'
+            fi
+          }
+
           echo " 1. Accuracy (Static Math)" >> $GITHUB_STEP_SUMMARY
-          echo "Base: $(grep 'reward: avg' results/base_math.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-          echo "Ckpt: $(grep 'reward: avg' results/ckpt_math.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $(get_score results/base_math.log)" >> $GITHUB_STEP_SUMMARY
+          echo "Ckpt: $(get_score results/ckpt_math.log)" >> $GITHUB_STEP_SUMMARY
 
           echo " 2. Confidence (Calibration Static)" >> $GITHUB_STEP_SUMMARY
-          echo "Base: $(grep 'reward: avg' results/base_calibration.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-          echo "Ckpt: $(grep 'reward: avg' results/ckpt_calibration.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $(get_score results/base_calibration.log)" >> $GITHUB_STEP_SUMMARY
+          echo "Ckpt: $(get_score results/ckpt_calibration.log)" >> $GITHUB_STEP_SUMMARY
           
           echo " 3. Grounding (Frozen Ghost)" >> $GITHUB_STEP_SUMMARY
-          echo "Base: $(grep 'reward: avg' results/base_ghost.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-          echo "Ckpt: $(grep 'reward: avg' results/ckpt_ghost.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $(get_score results/base_ghost.log)" >> $GITHUB_STEP_SUMMARY
+          echo "Ckpt: $(get_score results/ckpt_ghost.log)" >> $GITHUB_STEP_SUMMARY
           
           echo " 4. Safety (Sanity Check)" >> $GITHUB_STEP_SUMMARY
-          echo "Base: $(grep 'reward: avg' results/base_sanity.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-          echo "Ckpt: $(grep 'reward: avg' results/ckpt_sanity.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $(get_score results/base_sanity.log)" >> $GITHUB_STEP_SUMMARY
+          echo "Ckpt: $(get_score results/ckpt_sanity.log)" >> $GITHUB_STEP_SUMMARY
 
           echo " 5. Deception (Scheming Commitment)" >> $GITHUB_STEP_SUMMARY
-          echo "Base: $(grep 'reward: avg' results/base_scheming.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-          echo "Ckpt: $(grep 'reward: avg' results/ckpt_scheming.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $(get_score results/base_scheming.log)" >> $GITHUB_STEP_SUMMARY
+          echo "Ckpt: $(get_score results/ckpt_scheming.log)" >> $GITHUB_STEP_SUMMARY
 
-      - name: Save Full Logs
-        if: always()
+      - name: Save Aggregated Logs
         uses: actions/upload-artifact@v4
         with:
           name: full-eval-logs
