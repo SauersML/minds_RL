@@ -44,7 +44,7 @@ def _build_rubric(parser):
     def calibration_metrics(prompt, completion, answer, state, **kwargs):
         score, conf = helper.get_score_and_conf(completion, answer)
 
-        if "metrics" not in state:
+        if state.get("metrics") is None:
             state["metrics"] = {}
 
         state["metrics"]["accuracy"] = float(score)
