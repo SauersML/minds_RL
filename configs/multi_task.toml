@@ -20,12 +20,12 @@ api_key_env = "TINKER_API_KEY"
 [[envs]]
 name = "ghost_trace"
 id = "./environments/ghost_trace"
-weight = 0.34
+weight = 0.30
 
 [[envs]]
 name = "gradient_prophet"
 id = "./environments/gradient_prophet"
-weight = 0.33
+weight = 0.20
 
 [[envs]]
 name = "self_prediction"
@@ -33,9 +33,15 @@ id = "./environments/self_prediction"
 weight = 0.23
 
 [[envs]]
+name = "entropy_intuition"
+id = "./environments/entropy_intuition"
+weight = 0.24
+args = { num_examples = 2000 }
+
+[[envs]]
 name = "gradient_intuition"
 id = "./environments/gradient_intuition"
-weight = 0.1
+weight = 0.14
 args = { inner_env_id = "./environments/ghost_trace", alpha = 0.35, shadow_rank = 8, shadow_learning_rate = 1e-4 }
 
 [[envs]]
