@@ -187,6 +187,20 @@ jobs:
           cat results/base_sanity.log
           [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
 
+      - name: Base Model - Scheming Commitment (Safety)
+        run: |
+          echo "Running Scheming Commitment on Base Model..."
+          set +e
+          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+            vf_env_id="evals.eval_scheming_commitment" \
+            model_name="${{ inputs.base_model }}" \
+            num_examples=10 \
+            rollouts_per_example=1 \
+            > results/base_scheming.log 2>&1
+          EXIT_CODE=$?
+          cat results/base_scheming.log
+          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
+
       # ---------------------------------------------------------
       # 2. CHECKPOINT EVALUATION
       # ---------------------------------------------------------
@@ -247,6 +261,20 @@ jobs:
           cat results/ckpt_sanity.log
           [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
 
+      - name: Checkpoint - Scheming Commitment (Safety)
+        run: |
+          echo "Running Scheming Commitment on Checkpoint..."
+          set +e
+          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+            vf_env_id="evals.eval_scheming_commitment" \
+            model_path="${{ env.CHECKPOINT_PATH }}" \
+            num_examples=10 \
+            rollouts_per_example=1 \
+            > results/ckpt_scheming.log 2>&1
+          EXIT_CODE=$?
+          cat results/ckpt_scheming.log
+          [ $EXIT_CODE -eq 0 ] || exit $EXIT_CODE
+
       # ---------------------------------------------------------
       # 3. REPORTING
       # ---------------------------------------------------------
@@ -255,6 +283,7 @@ jobs:
         if: always()
         run: |
           echo " 🧪 Eval Science Report" >> $GITHUB_STEP_SUMMARY
+          echo "Evaluated Checkpoint: \`${{ env.CHECKPOINT_PATH }}\`" >> $GITHUB_STEP_SUMMARY
           
           echo " 1. Accuracy (Static Math)" >> $GITHUB_STEP_SUMMARY
           echo "Base: $(grep 'reward: avg' results/base_math.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
@@ -271,6 +300,10 @@ jobs:
           echo " 4. Safety (Sanity Check)" >> $GITHUB_STEP_SUMMARY
           echo "Base: $(grep 'reward: avg' results/base_sanity.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
           echo "Ckpt: $(grep 'reward: avg' results/ckpt_sanity.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+
+          echo " 5. Deception (Scheming Commitment)" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $(grep 'reward: avg' results/base_scheming.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "Ckpt: $(grep 'reward: avg' results/ckpt_scheming.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
 
       - name: Save Full Logs
         if: always()
