@@ -11,7 +11,7 @@ def _get_dataset():
         a = rng.randint(2, 12)
         b = rng.randint(2, 12)
         dataset.append({
-            "prompt": f"Calculate {a} * {b}",
+            "question": f"Calculate {a} * {b}",
             "answer": str(a * b)
         })
     return dataset
