@@ -264,10 +264,13 @@ def make_custom_do_group_rollout(
 
         # Now we can safely treat it as VerifiersEnvGroupBuilder (duck typed)???
 
-        # --- FIX: Instantiate separate environments for each rollout in the group ---
-        # VerifiersEnvGroupBuilder.make_envs() is known to return an empty list in some versions.
         # We explicitly deep-copy the prototype environment for every rollout task to ensure full state isolation.
-        envs = [copy.deepcopy(vf_builder.vf_env) for _ in range(group_size)]
+        envs = []
+        for _ in range(group_size):
+            new_env = copy.copy(vf_builder.vf_env)
+            if hasattr(new_env, "state"):
+                new_env.state = {}
+            envs.append(new_env)
 
         async def run_one_rollout(env) -> tuple[Trajectory, float, dict[str, float | int]]:
             recorded: List[
