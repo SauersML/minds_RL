@@ -9,6 +9,7 @@ import chz
 import tinker
 from tinker_cookbook.rl.train import RLDataset, RLDatasetBuilder
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder
+from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 from environments.gradient_intuition.gradient_intuition import GradientIntuitionBuilder
 from environments.gradient_prophet.gradient_prophet import GradientProphetDatasetBuilder, GradientProphetEnv
@@ -229,6 +230,9 @@ class GradientProphetRLDatasetBuilder(RLDatasetBuilder):
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
         service_client = tinker.ServiceClient(base_url=self.base_url)
         sampling_client = await service_client.create_sampling_client_async(base_model=self.model_name)
+        
+        # Attach tokenizer to the sampling client so the environment can use it for logprob calculations
+        sampling_client.tokenizer = get_tokenizer(self.model_name)
 
         # Pass renderer to builder so it can instantiate Envs correctly
         dataset_builder = GradientProphetDatasetBuilder(seed=self.seed, renderer=self.renderer)
