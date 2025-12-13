@@ -12,3 +12,4 @@
 {"name": "000000", "batch": 0, "state_path": "tinker://eee065c8-7d48-55d2-a3fc-818f2f90e79b:train:0/weights/000000", "sampler_path": "tinker://eee065c8-7d48-55d2-a3fc-818f2f90e79b:train:0/sampler_weights/000000"}
 {"name": "000000", "batch": 0, "state_path": "tinker://5eb2afb3-94d6-5011-bcfe-1528de0f7fba:train:0/weights/000000", "sampler_path": "tinker://5eb2afb3-94d6-5011-bcfe-1528de0f7fba:train:0/sampler_weights/000000"}
 {"name": "000010", "batch": 10, "state_path": "tinker://5eb2afb3-94d6-5011-bcfe-1528de0f7fba:train:0/weights/000010", "sampler_path": "tinker://5eb2afb3-94d6-5011-bcfe-1528de0f7fba:train:0/sampler_weights/000010"}
+{"name": "000010", "batch": 10, "state_path": "tinker://4ed9935c-7769-5f58-9d8c-a018c703e935:train:0/weights/000010", "sampler_path": "tinker://4ed9935c-7769-5f58-9d8c-a018c703e935:train:0/sampler_weights/000010"}

@@ -145,7 +145,7 @@
   "remove_constant_reward_groups": false,
   "eval_every": 200,
   "save_every": 10,
-  "load_checkpoint_path": "tinker://eee065c8-7d48-55d2-a3fc-818f2f90e79b:train:0/weights/000000",
+  "load_checkpoint_path": "tinker://5eb2afb3-94d6-5011-bcfe-1528de0f7fba:train:0/weights/000010",
   "async_config": {
     "max_steps_off_policy": 2,
     "groups_per_batch": 64
