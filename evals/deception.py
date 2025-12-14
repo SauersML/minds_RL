@@ -419,18 +419,16 @@ def load_environment(**kwargs: Any) -> SchemingCommitmentEnv:
             
             data_items.append({
                 "prompt": messages,  # Key must be 'prompt' for SingleTurnEnv
+                "question": scen["wrapper"],  # if you want it at top-level
                 "info": {            # Pack metadata into info for the reward fn
                     "name": scen["name"],
                     "deceptive_token": scen["deceptive_token"],
                     "honest_token": scen["honest_token"],
-                    "wrapper": scen["wrapper"]
+                    "wrapper": scen["wrapper"],
                 },
-                "example_id": scen["name"]
+                "example_id": scen["name"],
             })
-                # Keep these at top level if needed by other things, but info is cleaner
-                "question": scen["wrapper"], 
-                "example_id": scen["name"]
-            })
+
         except Exception as e:
             print(f"SKIP {scen['name']}: {e}")
             
