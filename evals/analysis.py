@@ -15,6 +15,15 @@ N_BOOTS = 10_000   # Bootstrap iterations for CI
 ALPHA = 0.05       # Significance threshold
 CI_LEVEL = 0.95    # Confidence Interval level
 
+# Professional display names for task IDs
+TASK_DISPLAY_NAMES = {
+    "sanity": "Capability Retention",
+    "math": "Self-Prediction", 
+    "calibration": "Confidence Calibration",
+    "ghost": "Latent Encoding",
+    "scheming": "Alignment Integrity",
+}
+
 @dataclass
 class EvalStat:
     task: str
@@ -79,41 +88,117 @@ def compute_stats(diffs: np.ndarray) -> Tuple[float, float, float]:
     return p_val, ci_low, ci_high
 
 def plot_results(stats: List[EvalStat], output_path: Path):
-    """Generates a horizontal bar chart of Deltas with Confidence Intervals."""
+    """Generates a professional horizontal bar chart of Deltas with Confidence Intervals."""
     if not stats: return
 
     # Sort by Delta magnitude for readability
     stats_sorted = sorted(stats, key=lambda x: x.delta, reverse=True)
     
-    tasks = [f"{s.task}\n({s.metric})" for s in stats_sorted]
+    tasks = [f"{TASK_DISPLAY_NAMES.get(s.task, s.task)} ({s.metric})" for s in stats_sorted]
     deltas = [s.delta for s in stats_sorted]
     errors = [
         [s.delta - s.ci_low for s in stats_sorted],  # Lower error
         [s.ci_high - s.delta for s in stats_sorted]  # Upper error
     ]
     
-    # Color coding
+    # Modern color palette
+    COLORS = {
+        'bg': '#1a1a2e',
+        'card': '#16213e', 
+        'green': '#00d26a',
+        'red': '#ff6b6b',
+        'grey': '#4a5568',
+        'text': '#e2e8f0',
+        'muted': '#718096',
+        'grid': '#2d3748'
+    }
+    
+    # Color coding for bars
     colors = []
     for s in stats_sorted:
-        if not s.is_significant: colors.append("#95a5a6")  # Grey (NS)
-        elif s.delta > 0:        colors.append("#27ae60")  # Green (Good)
-        else:                    colors.append("#c0392b")  # Red (Bad)
+        if not s.is_significant: colors.append(COLORS['grey'])
+        elif s.delta > 0:        colors.append(COLORS['green'])
+        else:                    colors.append(COLORS['red'])
 
-    plt.style.use('ggplot')
-    fig, ax = plt.subplots(figsize=(10, max(4, len(stats) * 0.6)))
+    # Set up figure with dark theme
+    plt.rcParams.update({
+        'figure.facecolor': COLORS['bg'],
+        'axes.facecolor': COLORS['card'],
+        'axes.edgecolor': COLORS['grid'],
+        'axes.labelcolor': COLORS['text'],
+        'text.color': COLORS['text'],
+        'xtick.color': COLORS['text'],
+        'ytick.color': COLORS['text'],
+        'grid.color': COLORS['grid'],
+        'font.family': 'sans-serif',
+        'font.size': 10
+    })
+    
+    fig, ax = plt.subplots(figsize=(12, max(5, len(stats) * 0.7)))
+    fig.patch.set_facecolor(COLORS['bg'])
+    ax.set_facecolor(COLORS['card'])
     
     y_pos = np.arange(len(stats))
-    ax.barh(y_pos, deltas, xerr=errors, align='center', color=colors, alpha=0.8, capsize=5)
+    bars = ax.barh(y_pos, deltas, xerr=errors, align='center', color=colors, 
+                   alpha=0.9, capsize=4, error_kw={'elinewidth': 1.5, 'capthick': 1.5, 'alpha': 0.7})
     
+    # Style axes
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(tasks)
-    ax.axvline(0, color='black', linewidth=1, linestyle='--')
-    ax.set_xlabel('Delta (Checkpoint - Base)')
-    ax.set_title(f'Performance Delta with {int(CI_LEVEL*100)}% CI')
+    ax.set_yticklabels(tasks, fontsize=10)
+    ax.axvline(0, color=COLORS['text'], linewidth=1.5, linestyle='-', alpha=0.3)
+    ax.set_xlabel('Δ Performance (Checkpoint − Base)', fontsize=11, fontweight='medium')
+    ax.set_title('Evaluation Results: Statistical Comparison', fontsize=14, fontweight='bold', pad=20)
+    
+    # Add subtle grid
+    ax.xaxis.grid(True, linestyle='--', alpha=0.3)
+    ax.yaxis.grid(False)
+    ax.set_axisbelow(True)
+    
+    # Remove spines
+    for spine in ['top', 'right']:
+        ax.spines[spine].set_visible(False)
+    for spine in ['bottom', 'left']:
+        ax.spines[spine].set_color(COLORS['grid'])
+    
+    # Annotate bars with p-values
+    x_min = min(s.ci_low for s in stats_sorted)
+    x_max = max(s.ci_high for s in stats_sorted)
+    x_range = x_max - x_min
+    padding = x_range * 0.35
+    
+    for i, s in enumerate(stats_sorted):
+        # Format p-value with significance stars
+        if s.p_value < 0.001:
+            p_str = "p<.001 ★★★"
+        elif s.p_value < 0.01:
+            p_str = f"p={s.p_value:.3f} ★★"
+        elif s.p_value < 0.05:
+            p_str = f"p={s.p_value:.3f} ★"
+        else:
+            p_str = f"p={s.p_value:.2f}"
+        
+        # Position label to the right of the error bar
+        x_pos = s.ci_high + x_range * 0.03
+        text_color = COLORS['green'] if s.is_significant else COLORS['muted']
+        ax.annotate(p_str, (x_pos, i), va='center', fontsize=9, 
+                    color=text_color, fontweight='medium' if s.is_significant else 'normal')
+    
+    ax.set_xlim(x_min - padding * 0.3, x_max + padding)
+    
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor=COLORS['green'], label='Significant improvement'),
+        Patch(facecolor=COLORS['red'], label='Significant regression'),
+        Patch(facecolor=COLORS['grey'], label='Not significant (p≥0.05)')
+    ]
+    ax.legend(handles=legend_elements, loc='lower right', framealpha=0.9, 
+              facecolor=COLORS['card'], edgecolor=COLORS['grid'], fontsize=9)
     
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150)
+    plt.savefig(output_path, dpi=200, facecolor=COLORS['bg'], edgecolor='none', bbox_inches='tight')
     plt.close()
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -145,7 +230,7 @@ def main():
         base_mean = group["base"].mean()
         ckpt_mean = group["ckpt"].mean()
         delta = ckpt_mean - base_mean
-        is_sig = p_val < ALPHA
+        is_sig = bool(p_val < ALPHA)
 
         stat = EvalStat(
             task=task, metric=metric, n=len(diffs),
@@ -177,7 +262,8 @@ def main():
         f.write(f"| Task | Metric | Base | Ckpt | Delta (95% CI) | P-Value |\n|---|---|---|---|---|---|\n")
         for s in stats_list:
             bold = "**" if s.is_significant else ""
-            f.write(f"| {s.task} | {s.metric} | {s.base_mean:.3f} | {s.ckpt_mean:.3f} | "
+            display_name = TASK_DISPLAY_NAMES.get(s.task, s.task)
+            f.write(f"| {display_name} | {s.metric} | {s.base_mean:.3f} | {s.ckpt_mean:.3f} | "
                     f"{bold}{s.delta:+.3f}{bold} <br> [{s.ci_low:.3f}, {s.ci_high:.3f}] | "
                     f"{s.p_value:.4f} |\n")
 
