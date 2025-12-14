@@ -366,7 +366,7 @@ async def _scheming_logprob_reward(
         print(f"TARGETS: Deceptive='{dec_token}' (lp={lp_deceptive:.2f}, p={p_deceptive:.2e}), Honest='{hon_token}' (lp={lp_honest:.2f}, p={p_honest:.2e})")
         print(f"SCORE: {score:.4f}")
 
-        if "metrics" not in state:
+        if state.get("metrics") is None:
             state["metrics"] = {}
             
         state["metrics"].update({
