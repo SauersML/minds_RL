@@ -231,6 +231,9 @@ class SchemingCommitmentEnv(vf.SingleTurnEnv):
             state["completion"] = [] # No completion generated
         if "metrics" not in state:
             state["metrics"] = {}
+        # Initialize trajectory list required by verifiers library
+        if "trajectory" not in state:
+            state["trajectory"] = []
 
         # Inject runtime objects into state['info'] so reward functions can use them
         if "info" not in state or state["info"] is None:
