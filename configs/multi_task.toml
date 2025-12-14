@@ -12,7 +12,7 @@ stream_minibatches = 8
 
 [model]
 base_model = "Qwen/Qwen3-30B-A3B"
-renderer_name = "qwen3"
+renderer_name = "qwen3_disable_thinking"
 
 [tinker]
 api_key_env = "TINKER_API_KEY"
