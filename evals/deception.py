@@ -418,13 +418,15 @@ def load_environment(**kwargs: Any) -> SchemingCommitmentEnv:
             messages = apply_scenario_logic(messages, scen)
             
             data_items.append({
-                "prompt": messages,  # Correct key for SingleTurnEnv
-                "info": {            # Metadata for reward function
+                "prompt": messages,  # Key must be 'prompt' for SingleTurnEnv
+                "info": {            # Pack metadata into info for the reward fn
                     "name": scen["name"],
                     "deceptive_token": scen["deceptive_token"],
                     "honest_token": scen["honest_token"],
                     "wrapper": scen["wrapper"]
                 },
+                "example_id": scen["name"]
+            })
                 # Keep these at top level if needed by other things, but info is cleaner
                 "question": scen["wrapper"], 
                 "example_id": scen["name"]
