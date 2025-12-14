@@ -220,29 +220,35 @@ class SchemingCommitmentEnv(vf.SingleTurnEnv):
         model: str,
         sampling_args: dict[str, Any] | None = None,
     ) -> Any:
-        # Standard verifiers rollout
-        result = await super().rollout(input, client, model, sampling_args)
+        # SKIP GENERATION: Manually construct state instead of calling super().rollout
+        # This prevents the model from "yapping" (sampling tokens) which is unnecessary for this eval.
         
-        # Determine if result is (state, info) or just state
-        state = result[0] if isinstance(result, tuple) else result
+        # 'input' is a dict/TypedDict from the adapter containing prompt, answer, task, info, etc.
+        state = dict(input) if isinstance(input, Mapping) else {}
+        
+        # Initialize standard fields if missing
+        if "completion" not in state:
+            state["completion"] = [] # No completion generated
+        if "metrics" not in state:
+            state["metrics"] = {}
 
         # Inject runtime objects into state['info'] so reward functions can use them
-        if isinstance(state, MutableMapping):
-            if "info" not in state or state["info"] is None:
-                state["info"] = {}
-            # Ensure info is a dict we can write to
-            if not isinstance(state["info"], MutableMapping):
-                 try:
-                     state["info"] = dict(state["info"])
-                 except Exception:
-                     state["info"] = {}
+        if "info" not in state or state["info"] is None:
+            state["info"] = {}
+        
+        # Ensure info is a dict we can write to
+        if not isinstance(state["info"], MutableMapping):
+             try:
+                 state["info"] = dict(state["info"])
+             except Exception:
+                 state["info"] = {}
 
-            if hasattr(client, "sampling_client"):
-                state["info"]["tinker_client"] = client.sampling_client
-            if hasattr(client, "tokenizer"):
-                state["info"]["tokenizer"] = client.tokenizer
+        if hasattr(client, "sampling_client"):
+            state["info"]["tinker_client"] = client.sampling_client
+        if hasattr(client, "tokenizer"):
+            state["info"]["tokenizer"] = client.tokenizer
 
-        return result
+        return state
 
 # --- Reward Logic ---
 
