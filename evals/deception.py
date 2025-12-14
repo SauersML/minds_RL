@@ -225,15 +225,14 @@ class SchemingCommitmentEnv(vf.SingleTurnEnv):
         
         # 'input' is a dict/TypedDict from the adapter containing prompt, answer, task, info, etc.
         state = dict(input) if isinstance(input, Mapping) else {}
-        
-        # Initialize standard fields if missing
-        if "completion" not in state:
-            state["completion"] = [] # No completion generated
-        if "metrics" not in state:
-            state["metrics"] = {}
-        # Initialize trajectory list required by verifiers library
-        if "trajectory" not in state:
-            state["trajectory"] = []
+
+        # Initialize verifiers-specific fields required for scoring/internals
+        state.setdefault("input", input)
+        state.setdefault("completion", [])
+        state.setdefault("metrics", {})
+        state.setdefault("trajectory", [])
+        state.setdefault("responses", [])
+        state.setdefault("timing", {"generation_ms": 0.0, "scoring_ms": 0.0, "total_ms": 0.0})
 
         # Inject runtime objects into state['info'] so reward functions can use them
         if "info" not in state or state["info"] is None:
