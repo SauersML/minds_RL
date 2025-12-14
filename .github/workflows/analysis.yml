@@ -29,7 +29,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install Dependencies
-        run: pip install pandas numpy matplotlib
+        run: pip install pandas numpy matplotlib scipy
 
       - name: Run Analysis
         run: python evals/analysis.py --input evals/evals.tsv --output_dir evals/results
@@ -45,4 +45,6 @@ jobs:
             evals/results/analysis_stats.json
             evals/results/analysis_summary.md
             evals/results/analysis_plot.png
+            evals/results/kde_distributions.png
+            evals/results/paired_violin.png
             evals/results/rewards_over_time.png

@@ -184,6 +184,171 @@ def plot_rewards_over_time(metrics_path: Path, output_path: Path, window: int = 
     plt.close()
     print(f"📈 Saved rewards plot to {output_path}")
 
+
+def plot_kde_distributions(df: pd.DataFrame, output_path: Path, task_filter: str = "reward"):
+    """Plot KDE distributions comparing base vs checkpoint for each task."""
+    from scipy import stats
+    
+    # Modern color palette
+    COLORS = {
+        'bg': '#1a1a2e',
+        'card': '#16213e', 
+        'base': '#ff6b6b',
+        'ckpt': '#4ecdc4',
+        'text': '#e2e8f0',
+        'muted': '#718096',
+        'grid': '#2d3748'
+    }
+    
+    # Filter to reward metric
+    df_filtered = df[df["Metric"] == task_filter] if task_filter else df
+    tasks = df_filtered["Task"].unique()
+    
+    if len(tasks) == 0:
+        print("⚠️  No data for KDE plot")
+        return
+    
+    # Set up figure
+    n_tasks = len(tasks)
+    fig, axes = plt.subplots(n_tasks, 1, figsize=(10, 3 * n_tasks), squeeze=False)
+    fig.patch.set_facecolor(COLORS['bg'])
+    
+    for idx, task in enumerate(tasks):
+        ax = axes[idx, 0]
+        ax.set_facecolor(COLORS['card'])
+        
+        task_data = df_filtered[df_filtered["Task"] == task]
+        base_vals = task_data["base"].values
+        ckpt_vals = task_data["ckpt"].values
+        
+        # Plot KDEs
+        if len(base_vals) > 2:
+            kde_base = stats.gaussian_kde(base_vals)
+            kde_ckpt = stats.gaussian_kde(ckpt_vals)
+            
+            x_min = min(base_vals.min(), ckpt_vals.min())
+            x_max = max(base_vals.max(), ckpt_vals.max())
+            x_range = x_max - x_min
+            x = np.linspace(x_min - 0.1 * x_range, x_max + 0.1 * x_range, 200)
+            
+            ax.fill_between(x, kde_base(x), alpha=0.4, color=COLORS['base'], label='Base')
+            ax.fill_between(x, kde_ckpt(x), alpha=0.4, color=COLORS['ckpt'], label='Checkpoint')
+            ax.plot(x, kde_base(x), color=COLORS['base'], linewidth=2)
+            ax.plot(x, kde_ckpt(x), color=COLORS['ckpt'], linewidth=2)
+        
+        # Style
+        display_name = TASK_DISPLAY_NAMES.get(task, task)
+        ax.set_ylabel('Density', color=COLORS['text'], fontsize=10)
+        ax.set_xlabel('Reward', color=COLORS['text'], fontsize=10)
+        ax.set_title(display_name, color=COLORS['text'], fontsize=12, fontweight='bold')
+        ax.tick_params(colors=COLORS['text'])
+        ax.legend(framealpha=0.9, facecolor=COLORS['card'], edgecolor=COLORS['grid'], fontsize=9)
+        
+        for spine in ['top', 'right']:
+            ax.spines[spine].set_visible(False)
+        for spine in ['bottom', 'left']:
+            ax.spines[spine].set_color(COLORS['grid'])
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200, facecolor=COLORS['bg'], edgecolor='none', bbox_inches='tight')
+    plt.close()
+    print(f"📊 Saved KDE distributions to {output_path}")
+
+
+def plot_paired_violin(df: pd.DataFrame, output_path: Path, task_filter: str = "reward"):
+    """Plot paired violin plots with connecting lines between observations."""
+    
+    # Modern color palette
+    COLORS = {
+        'bg': '#1a1a2e',
+        'card': '#16213e', 
+        'base': '#ff6b6b',
+        'ckpt': '#4ecdc4',
+        'text': '#e2e8f0',
+        'muted': '#718096',
+        'grid': '#2d3748',
+        'connect': '#a0aec0'
+    }
+    
+    # Filter to reward metric
+    df_filtered = df[df["Metric"] == task_filter] if task_filter else df
+    tasks = df_filtered["Task"].unique()
+    
+    if len(tasks) == 0:
+        print("⚠️  No data for violin plot")
+        return
+    
+    # Set up figure
+    n_tasks = len(tasks)
+    fig, axes = plt.subplots(1, n_tasks, figsize=(4 * n_tasks, 6), squeeze=False)
+    fig.patch.set_facecolor(COLORS['bg'])
+    
+    for idx, task in enumerate(tasks):
+        ax = axes[0, idx]
+        ax.set_facecolor(COLORS['card'])
+        
+        task_data = df_filtered[df_filtered["Task"] == task]
+        base_vals = task_data["base"].values
+        ckpt_vals = task_data["ckpt"].values
+        
+        # Create violin plots
+        parts_base = ax.violinplot([base_vals], positions=[0], showmeans=True, showmedians=False)
+        parts_ckpt = ax.violinplot([ckpt_vals], positions=[1], showmeans=True, showmedians=False)
+        
+        # Style violins
+        for pc in parts_base['bodies']:
+            pc.set_facecolor(COLORS['base'])
+            pc.set_alpha(0.6)
+            pc.set_edgecolor(COLORS['base'])
+        for pc in parts_ckpt['bodies']:
+            pc.set_facecolor(COLORS['ckpt'])
+            pc.set_alpha(0.6)
+            pc.set_edgecolor(COLORS['ckpt'])
+        
+        # Style mean lines
+        for partname in ['cmeans', 'cmins', 'cmaxes', 'cbars']:
+            if partname in parts_base:
+                parts_base[partname].set_color(COLORS['base'])
+                parts_base[partname].set_linewidth(2)
+            if partname in parts_ckpt:
+                parts_ckpt[partname].set_color(COLORS['ckpt'])
+                parts_ckpt[partname].set_linewidth(2)
+        
+        # Draw connecting lines between paired observations
+        for i in range(len(base_vals)):
+            # Add small jitter for visibility
+            jitter = np.random.uniform(-0.05, 0.05)
+            ax.plot([0 + jitter, 1 + jitter], [base_vals[i], ckpt_vals[i]], 
+                    color=COLORS['connect'], alpha=0.3, linewidth=0.8, zorder=1)
+        
+        # Overlay scatter points
+        jitter_base = np.random.uniform(-0.08, 0.08, len(base_vals))
+        jitter_ckpt = np.random.uniform(-0.08, 0.08, len(ckpt_vals))
+        ax.scatter(np.zeros(len(base_vals)) + jitter_base, base_vals, 
+                   color=COLORS['base'], alpha=0.7, s=15, zorder=2, edgecolors='white', linewidths=0.5)
+        ax.scatter(np.ones(len(ckpt_vals)) + jitter_ckpt, ckpt_vals, 
+                   color=COLORS['ckpt'], alpha=0.7, s=15, zorder=2, edgecolors='white', linewidths=0.5)
+        
+        # Style
+        display_name = TASK_DISPLAY_NAMES.get(task, task)
+        ax.set_title(display_name, color=COLORS['text'], fontsize=12, fontweight='bold')
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(['Base', 'Checkpoint'], color=COLORS['text'], fontsize=10)
+        ax.set_ylabel('Reward', color=COLORS['text'], fontsize=10)
+        ax.tick_params(colors=COLORS['text'])
+        ax.xaxis.grid(False)
+        ax.yaxis.grid(True, linestyle='--', alpha=0.3, color=COLORS['grid'])
+        
+        for spine in ['top', 'right']:
+            ax.spines[spine].set_visible(False)
+        for spine in ['bottom', 'left']:
+            ax.spines[spine].set_color(COLORS['grid'])
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200, facecolor=COLORS['bg'], edgecolor='none', bbox_inches='tight')
+    plt.close()
+    print(f"🎻 Saved paired violin plot to {output_path}")
+
 def plot_results(stats: List[EvalStat], output_path: Path):
     """Generates a professional horizontal bar chart of Deltas with Confidence Intervals."""
     if not stats: return
@@ -363,7 +528,13 @@ def main():
     # 3. Generate Plots
     plot_results(stats_list, args.output_dir / "analysis_plot.png")
     
-    # 4. Auto-find metrics.jsonl in outputs/ for rewards-over-time plot
+    # 4. Generate KDE distribution plots
+    plot_kde_distributions(df, args.output_dir / "kde_distributions.png")
+    
+    # 5. Generate paired violin plots
+    plot_paired_violin(df, args.output_dir / "paired_violin.png")
+    
+    # 6. Auto-find metrics.jsonl in outputs/ for rewards-over-time plot
     script_dir = Path(__file__).parent.parent  # Go up from evals/ to repo root
     metrics_files = list(script_dir.glob("outputs/**/metrics.jsonl"))
     if metrics_files:
