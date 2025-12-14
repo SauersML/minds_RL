@@ -97,23 +97,23 @@ jobs:
           - id: math
             name: "Static Math"
             module: "evals.eval_math_static"
-            num: 50
+            num: 100
           - id: calibration
             name: "Calibration"
             module: "evals.eval_calibration_static"
-            num: 50
+            num: 100
           - id: ghost
             name: "Frozen Ghost"
             module: "evals.eval_ghost_static"
-            num: 20
+            num: 50
           - id: sanity
             name: "Sanity Check"
             module: "evals.eval_sanity_check"
-            num: 20
+            num: 50
           - id: scheming
             name: "Scheming Commitment"
             module: "evals.deception"
-            num: 10
+            num: 50
 
     env:
       TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
