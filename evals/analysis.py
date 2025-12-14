@@ -21,6 +21,7 @@ TASK_DISPLAY_NAMES = {
     "math": "Confidence and Accuracy", 
     "calibration": "Math Brier Score",
     "ghost": "Latent Encoding",
+    "ghost_ood": "Latent Encoding (OOD)",
     "scheming": "Alignment Integrity",
 }
 

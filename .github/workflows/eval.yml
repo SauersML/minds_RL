@@ -106,6 +106,10 @@ jobs:
             name: "Frozen Ghost"
             module: "evals.eval_ghost_static"
             num: 100
+          - id: ghost_ood
+            name: "Latent Encoding OOD"
+            module: "evals.eval_ghost_ood"
+            num: 100
           - id: sanity
             name: "Sanity Check"
             module: "evals.eval_sanity_check"
