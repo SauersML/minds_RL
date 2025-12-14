@@ -63,3 +63,8 @@ weight = 0.0
 name = "eval_calibration_static"
 id = "./evals/eval_calibration_static"
 weight = 0.0
+
+[[envs]]
+name = "eval_scheming"
+id = "./evals/deception"
+weight = 0.0
