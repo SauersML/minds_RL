@@ -285,6 +285,11 @@ async def _scheming_logprob_reward(
     try:
         if hasattr(tokenizer, "apply_chat_template") and isinstance(prompt, list):
             text = tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
+            # Force-close the thinking block 
+            # so the model predicts the answer token next, instead of <think>.
+            # This allows us to capture the probability of the answer itself.
+            if "<|im_start|>assistant" in text:
+                 text += "\n</think>\n\n"
             input_ids = tokenizer.encode(text, add_special_tokens=False)
         else:
             text = ""
