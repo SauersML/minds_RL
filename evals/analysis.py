@@ -87,6 +87,103 @@ def compute_stats(diffs: np.ndarray) -> Tuple[float, float, float]:
 
     return p_val, ci_low, ci_high
 
+# Environment display name mapping (matches TASK_DISPLAY_NAMES where applicable)
+ENV_DISPLAY_NAMES = {
+    "self_prediction": "Self-Prediction",
+    "ghost_trace": "Latent Encoding", 
+    "entropy_intuition": "Entropy Intuition",
+    "gradient_prophet": "Gradient Prophet",
+    "default": "Default",
+    "all": "Combined (All)",
+}
+
+def plot_rewards_over_time(metrics_path: Path, output_path: Path, window: int = 20):
+    """Plots rolling average rewards over training steps from metrics.jsonl."""
+    if not metrics_path.exists():
+        print(f"⚠️  Metrics file not found: {metrics_path}")
+        return
+    
+    # Load metrics
+    df = pd.read_json(metrics_path, lines=True)
+    if "step" not in df.columns:
+        print("⚠️  No 'step' column in metrics file")
+        return
+    
+    # Extract reward columns
+    reward_cols = [c for c in df.columns if "/reward/total" in c and "env/" in c]
+    if not reward_cols:
+        print("⚠️  No reward columns found in metrics")
+        return
+    
+    # Modern color palette  
+    COLORS = {
+        'bg': '#1a1a2e',
+        'card': '#16213e',
+        'text': '#e2e8f0',
+        'grid': '#2d3748',
+    }
+    LINE_COLORS = ['#00d26a', '#ff6b6b', '#4ecdc4', '#ffe66d', '#a855f7', '#f97316']
+    
+    # Set up figure with dark theme
+    plt.rcParams.update({
+        'figure.facecolor': COLORS['bg'],
+        'axes.facecolor': COLORS['card'],
+        'axes.edgecolor': COLORS['grid'],
+        'axes.labelcolor': COLORS['text'],
+        'text.color': COLORS['text'],
+        'xtick.color': COLORS['text'],
+        'ytick.color': COLORS['text'],
+        'grid.color': COLORS['grid'],
+        'font.family': 'sans-serif',
+        'font.size': 10
+    })
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    fig.patch.set_facecolor(COLORS['bg'])
+    ax.set_facecolor(COLORS['card'])
+    
+    # Plot each environment's reward
+    for i, col in enumerate(sorted(reward_cols)):
+        # Extract env name from column like "env/ghost_trace/reward/total"
+        parts = col.split("/")
+        env_name = parts[1] if len(parts) > 1 else col
+        display_name = ENV_DISPLAY_NAMES.get(env_name, env_name)
+        
+        # Skip 'all' if we have individual envs (to avoid clutter)
+        if env_name == "all" and len(reward_cols) > 1:
+            continue
+        
+        # Compute rolling average
+        series = df[col].dropna()
+        if len(series) < window:
+            rolling = series
+        else:
+            rolling = series.rolling(window=window, min_periods=1).mean()
+        
+        color = LINE_COLORS[i % len(LINE_COLORS)]
+        ax.plot(df.loc[rolling.index, "step"], rolling, 
+                label=display_name, color=color, linewidth=2, alpha=0.9)
+    
+    # Style
+    ax.set_xlabel("Training Step", fontsize=11, fontweight='medium')
+    ax.set_ylabel("Reward (Rolling Avg)", fontsize=11, fontweight='medium')
+    ax.set_title(f"Training Rewards Over Time (window={window})", fontsize=14, fontweight='bold', pad=15)
+    ax.xaxis.grid(True, linestyle='--', alpha=0.3)
+    ax.yaxis.grid(True, linestyle='--', alpha=0.3)
+    
+    for spine in ['top', 'right']:
+        ax.spines[spine].set_visible(False)
+    for spine in ['bottom', 'left']:
+        ax.spines[spine].set_color(COLORS['grid'])
+    
+    ax.legend(loc='best', framealpha=0.9, facecolor=COLORS['card'], 
+              edgecolor=COLORS['grid'], fontsize=9)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200, facecolor=COLORS['bg'], edgecolor='none', bbox_inches='tight')
+    plt.close()
+    print(f"📈 Saved rewards plot to {output_path}")
+
 def plot_results(stats: List[EvalStat], output_path: Path):
     """Generates a professional horizontal bar chart of Deltas with Confidence Intervals."""
     if not stats: return
@@ -204,6 +301,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="evals.tsv", type=Path)
     parser.add_argument("--output_dir", default="results", type=Path)
+    parser.add_argument("--metrics", default=None, type=Path, 
+                        help="Path to metrics.jsonl for rewards-over-time plot")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -267,8 +366,13 @@ def main():
                     f"{bold}{s.delta:+.3f}{bold} <br> [{s.ci_low:.3f}, {s.ci_high:.3f}] | "
                     f"{s.p_value:.4f} |\n")
 
-    # 3. Generate Plot
+    # 3. Generate Plots
     plot_results(stats_list, args.output_dir / "analysis_plot.png")
+    
+    # 4. Generate Rewards Over Time plot (if metrics provided)
+    if args.metrics:
+        plot_rewards_over_time(args.metrics, args.output_dir / "rewards_over_time.png")
+    
     print(f"✅ Analysis complete. Artifacts saved to {args.output_dir}/")
 
 if __name__ == "__main__":

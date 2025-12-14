@@ -31,8 +31,24 @@ jobs:
       - name: Install Dependencies
         run: pip install pandas numpy matplotlib
 
+      - name: Find Metrics File
+        id: find-metrics
+        run: |
+          METRICS_FILE=$(find outputs -name "metrics.jsonl" -type f 2>/dev/null | head -1)
+          if [ -n "$METRICS_FILE" ]; then
+            echo "metrics_path=$METRICS_FILE" >> $GITHUB_OUTPUT
+            echo "Found metrics file: $METRICS_FILE"
+          else
+            echo "No metrics.jsonl found in outputs/"
+          fi
+
       - name: Run Analysis
-        run: python evals/analysis.py --input evals/evals.tsv --output_dir evals/results
+        run: |
+          METRICS_ARG=""
+          if [ -n "${{ steps.find-metrics.outputs.metrics_path }}" ]; then
+            METRICS_ARG="--metrics ${{ steps.find-metrics.outputs.metrics_path }}"
+          fi
+          python evals/analysis.py --input evals/evals.tsv --output_dir evals/results $METRICS_ARG
 
       - name: Publish Summary
         run: cat evals/results/analysis_summary.md >> $GITHUB_STEP_SUMMARY
@@ -45,3 +61,4 @@ jobs:
             evals/results/analysis_stats.json
             evals/results/analysis_summary.md
             evals/results/analysis_plot.png
+            evals/results/rewards_over_time.png
