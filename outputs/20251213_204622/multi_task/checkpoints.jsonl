@@ -14,3 +14,20 @@
 {"name": "000060", "batch": 60, "state_path": "tinker://5f559fba-3c1e-57e6-aced-f17c2ef97906:train:0/weights/000060", "sampler_path": "tinker://5f559fba-3c1e-57e6-aced-f17c2ef97906:train:0/sampler_weights/000060"}
 {"name": "000060_1", "batch": 60, "state_path": "tinker://5f559fba-3c1e-57e6-aced-f17c2ef97906:train:0/weights/000060_1"}
 {"name": "000070", "batch": 70, "state_path": "tinker://5f559fba-3c1e-57e6-aced-f17c2ef97906:train:0/weights/000070", "sampler_path": "tinker://5f559fba-3c1e-57e6-aced-f17c2ef97906:train:0/sampler_weights/000070"}
+{"name": "000070", "batch": 70, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000070", "sampler_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/sampler_weights/000070"}
+{"name": "000070_1", "batch": 70, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000070_1"}
+{"name": "000080", "batch": 80, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000080", "sampler_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/sampler_weights/000080"}
+{"name": "000080_1", "batch": 80, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000080_1"}
+{"name": "000090", "batch": 90, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000090", "sampler_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/sampler_weights/000090"}
+{"name": "000090_1", "batch": 90, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000090_1"}
+{"name": "000100", "batch": 100, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000100", "sampler_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/sampler_weights/000100"}
+{"name": "000100_1", "batch": 100, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000100_1"}
+{"name": "000110", "batch": 110, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000110", "sampler_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/sampler_weights/000110"}
+{"name": "000110_1", "batch": 110, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000110_1"}
+{"name": "000120", "batch": 120, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000120", "sampler_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/sampler_weights/000120"}
+{"name": "000120_1", "batch": 120, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000120_1"}
+{"name": "000130", "batch": 130, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000130", "sampler_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/sampler_weights/000130"}
+{"name": "000130_1", "batch": 130, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000130_1"}
+{"name": "000140", "batch": 140, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000140", "sampler_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/sampler_weights/000140"}
+{"name": "000140_1", "batch": 140, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000140_1"}
+{"name": "000150", "batch": 150, "state_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/weights/000150", "sampler_path": "tinker://9ae18236-e81c-5d21-9ea8-3d43f2a0efaa:train:0/sampler_weights/000150"}
