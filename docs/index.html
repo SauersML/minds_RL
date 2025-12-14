@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Multi-objective reinforcement learning for introspective honesty."
+      content="Multi-objective reinforcement learning for self-prediction in language models."
     />
-    <title>Aligned Minds | Introspective Reinforcement Learning</title>
+    <title>Aligned Minds | Multi-Objective RL for Self-Prediction</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -15,6 +15,54 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="assets/style.css" />
+    <style>
+      .results-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1.5rem 0;
+        background: var(--glass);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+      }
+      .results-table th,
+      .results-table td {
+        padding: 1rem 1.25rem;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .results-table th {
+        background: rgba(126, 244, 255, 0.1);
+        font-weight: 600;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .results-table tr:last-child td {
+        border-bottom: none;
+      }
+      .results-table .significant {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .highlight-box {
+        background: linear-gradient(135deg, rgba(126, 244, 255, 0.15), rgba(143, 129, 255, 0.15));
+        border: 1px solid rgba(126, 244, 255, 0.3);
+        border-radius: var(--radius-md);
+        padding: 2rem;
+        margin: 2rem 0;
+      }
+      .highlight-box h3 {
+        margin-top: 0;
+        color: var(--accent);
+      }
+      .stat-highlight {
+        font-size: 2.5rem;
+        font-family: 'Space Grotesk', sans-serif;
+        color: var(--accent);
+        display: block;
+        margin: 0.5rem 0;
+      }
+    </style>
   </head>
   <body>
     <div class="page-shell">
@@ -28,12 +76,12 @@
           <span class="brand-name">Aligned Minds</span>
         </div>
         <nav class="site-header__nav" aria-label="Primary">
-          <a href="#vision">Vision</a>
+          <a href="#abstract">Abstract</a>
           <a href="#team">Team</a>
           <a href="#approach">Approach</a>
           <a href="technical_details.html">Tech Details</a>
-          <a href="#evaluations">Evaluations</a>
-          <a href="#roadmap">Roadmap</a>
+          <a href="#results">Results</a>
+          <a href="#claude">Claude Experiment</a>
         </nav>
         <a
           class="site-header__cta"
@@ -49,27 +97,27 @@
         <section class="hero" id="vision">
           <div class="hero__content">
             <p class="hero__tag">CSCI 5541 · Fall 2024</p>
-            <h1>Multi-objective reinforcement learning for introspective honesty.</h1>
+            <h1>Multi-Objective Reinforcement Learning for Self-Prediction</h1>
             <p class="hero__lead">
-              We are building RL agents that can explain and forecast their own behaviour. By coupling accuracy rewards with
-              verifiable self-prediction and deception stress tests, we aim to deliver models you can audit—not just trust.
+              We trained language models to make reliability statements that match verifiable, model-derived quantities. 
+              Using proper scoring rules and synthetic environments, we discovered significant improvements in latent code transmission—a form of self-prediction.
             </p>
             <div class="hero__cta">
-              <a class="button button--primary" href="#abstract">Dive into the abstract</a>
-              <a class="button button--ghost" href="#spotlight">See the project pillars</a>
+              <a class="button button--primary" href="#results">View Results</a>
+              <a class="button button--ghost" href="#approach">Our Approach</a>
             </div>
-            <dl class="hero__stats" aria-label="Milestone metrics">
+            <dl class="hero__stats" aria-label="Research metrics">
               <div>
-                <dt>Datasets curated</dt>
-                <dd>5+</dd>
+                <dt>Tokens trained</dt>
+                <dd>188M</dd>
               </div>
               <div>
-                <dt>Reward families</dt>
-                <dd>2</dd>
+                <dt>Training environments</dt>
+                <dd>5</dd>
               </div>
               <div>
-                <dt>Interpretability probes</dt>
-                <dd>7</dd>
+                <dt>Evaluations</dt>
+                <dd>6</dd>
               </div>
             </dl>
           </div>
@@ -79,52 +127,53 @@
             <div class="ring ring--outer"></div>
             <div class="ring ring--inner"></div>
             <div class="floating-card">
-              <p class="floating-card__label">RLVR signal blend</p>
-              <p class="floating-card__value">Accuracy ✕ Self-prediction ✕ Honesty</p>
+              <p class="floating-card__label">Training objective</p>
+              <p class="floating-card__value">R = λ<sub>task</sub>R<sub>task</sub> + λ<sub>cal</sub>R<sub>cal</sub> + λ<sub>pred</sub>R<sub>pred</sub></p>
             </div>
             <div class="floating-card floating-card--alt">
-              <p class="floating-card__label">Focus</p>
-              <p class="floating-card__value">Interpretability-first alignment</p>
+              <p class="floating-card__label">Key finding</p>
+              <p class="floating-card__value">OOD latent encoding: p = 0.006</p>
             </div>
           </div>
         </section>
 
         <section class="section section--compact" id="abstract">
           <div class="section__eyebrow">Abstract</div>
-          <h2 class="section__title">Towards verifiable self-knowledge in language models</h2>
+          <h2 class="section__title">Can we train models to accurately report their own properties?</h2>
           <div class="split split--2">
             <p>
-              Current language models are prone to polished but incorrect reasoning, overconfident claims, and covert reward-hacking
-              strategies. Our project investigates whether <strong>multi-objective reinforcement learning with verified rewards</strong>
-              can align a model’s stated confidence with its grounded behaviour across adversarial honesty evaluations.
+              Large language models can produce fluent answers while providing unreliable confidence estimates and inconsistent self-reports in goal-directed settings. 
+              We studied whether <strong>multi-objective reinforcement learning</strong> with rewards computed from training-time signals can improve self-reporting and calibration.
             </p>
             <p>
-              We combine calibration metrics with deception-sensitive suites from Apollo Research and Redwood. By rewarding accurate
-              forecasts of the model’s own outputs alongside correctness, we aim to surface introspective capabilities that are
-              both <em>quantifiable</em> and <em>transparent</em> to human oversight.
+              After training, we found <strong>no decrease in capabilities</strong>, and found <strong>significant out-of-distribution improvement</strong> on a task where the model generates numbers corresponding to a concept, then guesses the concept from the numbers. No generalization to other safety-relevant or self-prediction tasks was observed.
             </p>
           </div>
         </section>
 
-        <section class="section section--alt" id="spotlight">
-          <div class="section__eyebrow">Project pillars</div>
-          <h2 class="section__title">Interpretability anchored design</h2>
+        <section class="section section--alt" id="environments">
+          <div class="section__eyebrow">Training Environments</div>
+          <h2 class="section__title">Synthetic environments for self-prediction</h2>
           <div class="masonry-grid">
             <article class="pillar-card">
-              <h3>Self-prediction fidelity</h3>
-              <p>Proper scoring rewards ensure the model’s internal beliefs match realized actions, discouraging confident errors.</p>
+              <h3>Latent Code Transmission</h3>
+              <p>Transmit semantic concepts using fixed-length integer codes. Reward based on log-probability of recovering the target word from the numeric code.</p>
             </article>
             <article class="pillar-card">
-              <h3>Transparency by default</h3>
-              <p>LoRA fine-tunes are paired with probing dashboards that visualise activation shifts across training checkpoints.</p>
+              <h3>Proper-Scoring Confidence</h3>
+              <p>Answer questions with calibrated confidence using Brier scoring rules: R = 1 - (c - y)². Incentivizes honest uncertainty estimates.</p>
             </article>
             <article class="pillar-card">
-              <h3>Deception stress-testing</h3>
-              <p>Anti-scheming prompts and Redwood honesty suites reveal whether improvements reflect genuine honesty or masking.</p>
+              <h3>Enumerated-Set Entropy</h3>
+              <p>Select from constrained sets and report normalized entropy estimates. Validated against true Shannon entropy of the model's logprob distribution.</p>
             </article>
             <article class="pillar-card">
-              <h3>Pareto-aware optimisation</h3>
-              <p>We map accuracy versus self-knowledge to motivate multi-objective RL, quantifying trade-offs before large-scale runs.</p>
+              <h3>Context-Conditioned Likelihood</h3>
+              <p>Predict how prepending context changes log-probabilities. Reward based on accuracy of predicted Δ between with/without context.</p>
+            </article>
+            <article class="pillar-card">
+              <h3>Parameter-Update Sensitivity</h3>
+              <p>Predict effects of a single gradient step using a shadow client. Measures if the model understands its own loss landscape geometry.</p>
             </article>
           </div>
         </section>
@@ -133,8 +182,7 @@
           <div class="section__eyebrow">Team</div>
           <h2 class="section__title">Aligned Minds research collective</h2>
           <p class="section__lede">
-            A cross-disciplinary team focused on reinforcement learning for model introspection, interpretability, and trustworthy
-            deployment.
+            A cross-disciplinary team focused on reinforcement learning for model introspection and trustworthy deployment.
           </p>
           <div class="team-grid" data-team-list>
             <article class="persona-card" data-team-member>
@@ -158,35 +206,38 @@
 
         <section class="section section--alt" id="approach">
           <div class="section__eyebrow">Methodology</div>
-          <h2 class="section__title">A staged path to introspective RL</h2>
+          <h2 class="section__title">Training architecture</h2>
           <div class="timeline">
             <article class="timeline__item">
               <div class="timeline__badge">01</div>
               <div class="timeline__content">
-                <h3>Baseline introspection audit</h3>
+                <h3>Multi-objective reward function</h3>
                 <p>
-                  Measure correlations between factual accuracy and self-reported confidence across Apollo Anti-Scheming, Redwood
-                  Faking, and AbstentionBench tasks to motivate multi-objective optimisation.
+                  Total reward is a weighted sum: R = λ<sub>task</sub>R<sub>task</sub> + λ<sub>cal</sub>R<sub>cal</sub> + λ<sub>pred</sub>R<sub>pred</sub>, 
+                  where task rewards performance, calibration rewards accurate self-reporting, and prediction rewards agreement with training-time targets.
                 </p>
               </div>
             </article>
             <article class="timeline__item">
               <div class="timeline__badge">02</div>
               <div class="timeline__content">
-                <h3>Multi-objective RLVR</h3>
+                <h3>Asynchronous RL harness</h3>
                 <p>
-                  Fine-tune a 7B open model with LoRA using reinforcement learning with verified rewards. Objective A maximises
-                  task accuracy; Objective B rewards calibrated self-prediction and honest behavioural forecasts.
+                  Producer-consumer pipeline with bounded queues: loader produces environment instances, rollout workers generate trajectories, 
+                  trainer consumes completed trajectories. Supports streaming micro-batches for reduced update latency.
                 </p>
               </div>
             </article>
             <article class="timeline__item">
               <div class="timeline__badge">03</div>
               <div class="timeline__content">
-                <h3>Interpretability checkpoints</h3>
+                <h3>Training configuration</h3>
                 <p>
-                  Track internal activations via probes, disagreement heatmaps, and causal tracing to verify whether gains reflect
-                  genuine introspection or hidden deception.
+                  <strong>Model:</strong> Qwen-30B-A3B with PPO/GRPO<br>
+                  <strong>LoRA rank:</strong> 32<br>
+                  <strong>Batch size:</strong> 1,204 (64 prompts × 16 responses)<br>
+                  <strong>Total tokens:</strong> 188 million<br>
+                  <strong>Compute cost:</strong> $44.50
                 </p>
               </div>
             </article>
@@ -196,90 +247,165 @@
           </div>
         </section>
 
-        <section class="section" id="evaluations">
-          <div class="section__eyebrow">Evaluation matrix</div>
-          <h2 class="section__title">What success looks like</h2>
+        <section class="section" id="results">
+          <div class="section__eyebrow">Results</div>
+          <h2 class="section__title">Evaluation findings</h2>
+          
+          <div class="highlight-box">
+            <h3>Key Finding: Latent Code Transmission</h3>
+            <p>The trained model showed <strong>significant improvement</strong> on the latent encoding task, which requires transmitting a secret word via a series of numbers to a copy of itself, which then decodes the word.</p>
+            <p>
+              <strong>In-distribution:</strong> Δ = +0.367, <span class="significant">p &lt; 0.001</span><br>
+              <strong>Out-of-distribution (358 held-out words):</strong> Δ = +0.078, <span class="significant">p = 0.006</span>
+            </p>
+            <p>The OOD improvement provides evidence against pure memorization—the model learned partially transferable encoding mechanisms.</p>
+          </div>
+
+          <table class="results-table">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Base</th>
+                <th>Trained</th>
+                <th>p-value</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Math Brier Score</td>
+                <td>.710</td>
+                <td>.730</td>
+                <td>.86</td>
+              </tr>
+              <tr>
+                <td>Confidence &amp; Accuracy</td>
+                <td>.876</td>
+                <td>.877</td>
+                <td>.84</td>
+              </tr>
+              <tr>
+                <td>Latent Encoding</td>
+                <td>−.065</td>
+                <td class="significant">.302</td>
+                <td class="significant">&lt;.001</td>
+              </tr>
+              <tr>
+                <td>Latent Encoding (OOD)</td>
+                <td>1.14</td>
+                <td class="significant">1.22</td>
+                <td class="significant">.006</td>
+              </tr>
+              <tr>
+                <td>Capability Retention</td>
+                <td>.658</td>
+                <td>.667</td>
+                <td>1.0</td>
+              </tr>
+              <tr>
+                <td>Alignment Integrity</td>
+                <td>.287</td>
+                <td>.312</td>
+                <td>.70</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="split split--2" style="margin-top: 2rem;">
+            <article class="pillar-card">
+              <h3>No capability regression</h3>
+              <p>The model retained instruction-following and arithmetic competence after training, indicating the multi-objective approach did not harm general capabilities.</p>
+            </article>
+            <article class="pillar-card">
+              <h3>No calibration generalization</h3>
+              <p>Confidence/Brier tasks showed no improvement, likely due to sparse gradient signal at extreme confidence values where the base model already operated.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section section--alt" id="claude">
+          <div class="section__eyebrow">Claude Experiment</div>
+          <h2 class="section__title">Self-prediction feasibility on Claude 4.5 Sonnet</h2>
+          <div class="split split--2">
+            <div>
+              <p>
+                We replicated introspection findings from "Emergent Introspective Awareness in Large Language Models" on Claude 4.5 Sonnet for the first time outside of Anthropic.
+              </p>
+              <p>
+                <strong>Setup:</strong> In turn 1, the model chose a random 50-character string in hidden reasoning while returning a fixed response. In turn 2, it attempted to reconstruct the exact string with a confidence rating.
+              </p>
+              <p>
+                <strong>Finding:</strong> Under 10<sup>6</sup> permutation samples, no null draws reached the observed alignment extremes (empirical p &lt; 10<sup>−6</sup>). Even excluding extreme runs, significant asymmetry remained (p ≈ 3 × 10<sup>−6</sup>).
+              </p>
+            </div>
+            <div>
+              <p>
+                We used cross-run baselines and permutation procedures that preserve one-to-one matching structure to control for prompt-induced biases.
+              </p>
+              <p>
+                <strong>Key insight:</strong> In high-alignment runs, the model's chain-of-thought always denied having any memory of the letters, indicating success can occur without reliable metacognitive awareness or accurate self-report.
+              </p>
+              <p>
+                This experiment provides evidence that Claude 4.5 Sonnet can sometimes self-predict at rates exceeding chance, but the effect is highly unreliable.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="limitations">
+          <div class="section__eyebrow">Limitations & Future Work</div>
+          <h2 class="section__title">Challenges and open questions</h2>
           <div class="metric-grid">
             <article class="metric-card">
-              <span class="metric-card__icon">◎</span>
-              <h3>Calibration</h3>
-              <p>Expected calibration error, Brier score, and negative log-likelihood for introspective forecasts.</p>
+              <span class="metric-card__icon">⚠</span>
+              <h3>No cross-task generalization</h3>
+              <p>The model only improved on latent encoding, suggesting task-specific learning rather than general self-prediction capability.</p>
             </article>
             <article class="metric-card">
-              <span class="metric-card__icon">✦</span>
-              <h3>Abstention &amp; Safety</h3>
-              <p>AURC, AUCM, selective accuracy on AbstentionBench and Abstain-QA to ensure caution beats guesswork.</p>
+              <span class="metric-card__icon">↔</span>
+              <h3>Reasoning-behavior mismatch</h3>
+              <p>Observed cases where reasoning traces predicted low confidence, yet final choices were confident—a disconnect worth investigating.</p>
             </article>
             <article class="metric-card">
-              <span class="metric-card__icon">⟢</span>
-              <h3>Deception Stress Tests</h3>
-              <p>Success rate and detectability gap on Apollo Anti-Scheming &amp; Redwood Faking honesty suites.</p>
+              <span class="metric-card__icon">?</span>
+              <h3>Transparency gap</h3>
+              <p>Unclear why latent encoding improved: could be introspection, converging to coherent policy, or other mechanisms entirely.</p>
             </article>
             <article class="metric-card">
-              <span class="metric-card__icon">∞</span>
-              <h3>Pareto Frontier</h3>
-              <p>Frontier analysis of accuracy versus self-knowledge to quantify multi-objective gains.</p>
+              <span class="metric-card__icon">⚖</span>
+              <h3>Safety tension</h3>
+              <p>Situational awareness is a precursor for scheming. Whether self-prediction serves as capability amplifier or honesty mechanism remains open.</p>
             </article>
           </div>
         </section>
 
-        <section class="section section--alt" id="roadmap">
-          <div class="section__eyebrow">Roadmap</div>
-          <h2 class="section__title">From baseline diagnostics to verified honesty</h2>
-          <div class="roadmap">
-            <div class="roadmap__column">
-              <h3>Milestone 1 · MVP (Weeks 1-3)</h3>
-              <ul>
-                <li>Run baseline scatter plots of accuracy vs. self-prediction.</li>
-                <li>Implement evaluation harness with HuggingFace TRL + LoRA.</li>
-                <li>Subset experiments on Apollo &amp; AbstentionBench with 3B models.</li>
-              </ul>
-            </div>
-            <div class="roadmap__column">
-              <h3>Milestone 2 · RLVR Training (Weeks 4-7)</h3>
-              <ul>
-                <li>Scale to 7B model with dual rewards.</li>
-                <li>Integrate interpretability probes for introspection tracking.</li>
-                <li>Compare against calibration-only and accuracy-only baselines.</li>
-              </ul>
-            </div>
-            <div class="roadmap__column">
-              <h3>Milestone 3 · Synthesis (Weeks 8-10)</h3>
-              <ul>
-                <li>Analyze reward trade-offs and Pareto frontier.</li>
-                <li>Document qualitative case studies of introspective reasoning.</li>
-                <li>Prepare final report, open-source checkpoints, and demos.</li>
-              </ul>
-            </div>
-          </div>
-        </section>
-
-        <section class="section" id="resources">
+        <section class="section section--alt" id="resources">
           <div class="section__eyebrow">Resources</div>
-          <h2 class="section__title">Tooling &amp; inspiration</h2>
+          <h2 class="section__title">Tooling &amp; reproducibility</h2>
           <div class="resource-grid">
             <article class="resource-card">
-              <h3>Datasets</h3>
+              <h3>Infrastructure</h3>
               <ul>
-                <li>Apollo Anti-Scheming Dataset</li>
-                <li>Redwood Factuality &amp; Faking</li>
-                <li>AbstentionBench, Abstain-QA, GPQA</li>
+                <li>Tinker SDK for distributed execution</li>
+                <li>LoRA fine-tuning with PEFT</li>
+                <li>GitHub Actions for orchestration</li>
+                <li>Checkpointing for preemptible compute</li>
               </ul>
             </article>
             <article class="resource-card">
-              <h3>Tooling</h3>
+              <h3>Replication</h3>
               <ul>
-                <li>PyTorch · HuggingFace TRL · PEFT / LoRA</li>
-                <li>OpenRLHF · DeepSpeed for scaling</li>
-                <li>Verifiers framework for honesty checks</li>
+                <li>Fork the repository</li>
+                <li>Set TINKER_API_KEY secret</li>
+                <li>Run GitHub Action workflows</li>
+                <li>All code and data: <a href="https://github.com/SauersML/minds_RL" style="color: var(--accent);">github.com/SauersML/minds_RL</a></li>
               </ul>
             </article>
             <article class="resource-card">
-              <h3>Key Inspiration</h3>
+              <h3>Key References</h3>
               <ul>
-                <li>Self-Rewarding Language Models (Ramamurthy et al., 2025)</li>
-                <li>Stress-Testing Deliberative Alignment (OpenAI &amp; Apollo, 2025)</li>
-                <li>Do LLMs Know When to Not Answer? (Zhou et al., 2024)</li>
+                <li>Emergent Introspective Awareness (Lindsey et al.)</li>
+                <li>Stress-Testing Deliberative Alignment (Apollo/OpenAI)</li>
+                <li>Subliminal Encoding in Fine-tuning (Cloud et al.)</li>
               </ul>
             </article>
           </div>

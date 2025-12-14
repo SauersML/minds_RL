@@ -1,287 +1,487 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="Technical details of the Aligned Minds RL environments and infrastructure."
-    />
-    <title>Technical Details | Aligned Minds</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="assets/style.css" />
-    <style>
-      /* Additional styles for technical content */
-      .tech-container {
-        max-width: 900px;
-        margin: 0 auto;
-        padding: 4rem 2rem;
-      }
-      .tech-section {
-        margin-bottom: 4rem;
-      }
-      .tech-section h2 {
-        font-family: 'Space Grotesk', sans-serif;
-        font-size: 2.5rem;
-        margin-bottom: 1.5rem;
-        color: var(--color-text-main);
-      }
-      .tech-section h3 {
-        font-family: 'Space Grotesk', sans-serif;
-        font-size: 1.75rem;
-        margin-top: 2rem;
-        margin-bottom: 1rem;
-        color: var(--color-text-main);
-      }
-      .tech-section h4 {
-        font-family: 'Space Grotesk', sans-serif;
-        font-size: 1.25rem;
-        margin-top: 1.5rem;
-        margin-bottom: 0.5rem;
-        color: var(--color-secondary);
-      }
-      .tech-section p {
-        margin-bottom: 1rem;
-        line-height: 1.6;
-      }
-      .code-block {
-        background: rgba(0, 0, 0, 0.3);
-        padding: 1rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        overflow-x: auto;
-        font-family: 'Courier New', Courier, monospace;
-        margin-bottom: 1.5rem;
-        font-size: 0.9rem;
-      }
-      .math-block {
-        background: rgba(255, 255, 255, 0.05);
-        padding: 1.5rem;
-        border-radius: 8px;
-        margin: 1.5rem 0;
-        text-align: center;
-        font-style: italic;
-        font-family: 'Times New Roman', Times, serif;
-        font-size: 1.1rem;
-      }
-      .back-link {
-        display: inline-block;
-        margin-bottom: 2rem;
-        color: var(--color-primary);
-        text-decoration: none;
-        font-weight: 500;
-      }
-      .back-link:hover {
-        text-decoration: underline;
-      }
-      ul.tech-list {
-        list-style-type: disc;
-        margin-left: 2rem;
-        margin-bottom: 1.5rem;
-      }
-      ul.tech-list li {
-        margin-bottom: 0.5rem;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="page-shell">
-      <div class="aurora" aria-hidden="true"></div>
 
-      <header class="site-header">
-        <div class="site-header__brand">
-          <span class="brand-icon">⟢</span>
-          <span class="brand-name">Aligned Minds</span>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Technical details of the Aligned Minds RL environments and infrastructure." />
+  <title>Technical Details | Aligned Minds</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+  <style>
+    /* Additional styles for technical content */
+    .tech-container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 4rem 2rem;
+    }
+
+    .tech-section {
+      margin-bottom: 4rem;
+    }
+
+    .tech-section h2 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 2.5rem;
+      margin-bottom: 1.5rem;
+      color: var(--color-text-main);
+    }
+
+    .tech-section h3 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.75rem;
+      margin-top: 2rem;
+      margin-bottom: 1rem;
+      color: var(--color-text-main);
+    }
+
+    .tech-section h4 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.25rem;
+      margin-top: 1.5rem;
+      margin-bottom: 0.5rem;
+      color: var(--accent);
+    }
+
+    .tech-section p {
+      margin-bottom: 1rem;
+      line-height: 1.6;
+    }
+
+    .code-block {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 1rem;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      overflow-x: auto;
+      font-family: 'Courier New', Courier, monospace;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+    }
+
+    .math-block {
+      background: rgba(255, 255, 255, 0.05);
+      padding: 1.5rem;
+      border-radius: 8px;
+      margin: 1.5rem 0;
+      text-align: center;
+      font-style: italic;
+      font-family: 'Times New Roman', Times, serif;
+      font-size: 1.1rem;
+    }
+
+    .back-link {
+      display: inline-block;
+      margin-bottom: 2rem;
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .back-link:hover {
+      text-decoration: underline;
+    }
+
+    ul.tech-list {
+      list-style-type: disc;
+      margin-left: 2rem;
+      margin-bottom: 1.5rem;
+    }
+
+    ul.tech-list li {
+      margin-bottom: 0.5rem;
+    }
+
+    ol.tech-list {
+      margin-left: 2rem;
+      margin-bottom: 1.5rem;
+    }
+
+    ol.tech-list li {
+      margin-bottom: 0.5rem;
+    }
+
+    .config-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5rem 0;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .config-table th,
+    .config-table td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .config-table th {
+      background: rgba(126, 244, 255, 0.1);
+      font-weight: 600;
+    }
+
+    .config-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .highlight-note {
+      background: linear-gradient(135deg, rgba(126, 244, 255, 0.1), rgba(143, 129, 255, 0.1));
+      border-left: 3px solid var(--accent);
+      padding: 1rem 1.5rem;
+      margin: 1.5rem 0;
+      border-radius: 0 8px 8px 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page-shell">
+    <div class="aurora" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <div class="site-header__brand">
+        <span class="brand-icon">⟢</span>
+        <span class="brand-name">Aligned Minds</span>
+      </div>
+      <nav class="site-header__nav" aria-label="Primary">
+        <a href="index.html#abstract">Abstract</a>
+        <a href="index.html#team">Team</a>
+        <a href="index.html#approach">Approach</a>
+        <a href="index.html#results">Results</a>
+      </nav>
+    </header>
+
+    <main class="tech-container">
+      <a href="index.html" class="back-link">← Back to Home</a>
+
+      <h1 style="font-family: 'Space Grotesk', sans-serif; font-size: 3.5rem; margin-bottom: 1rem;">Technical
+        Implementation</h1>
+      <p class="hero__lead">Detailed documentation of the custom RL environments, training infrastructure, and
+        experimental setup.</p>
+
+      <section class="tech-section" id="training-config">
+        <h2>Training Configuration</h2>
+
+        <table class="config-table">
+          <tr>
+            <th>Parameter</th>
+            <th>Value</th>
+          </tr>
+          <tr>
+            <td>Base Model</td>
+            <td>Qwen-30B-A3B</td>
+          </tr>
+          <tr>
+            <td>Algorithm</td>
+            <td>PPO/GRPO</td>
+          </tr>
+          <tr>
+            <td>LoRA Rank</td>
+            <td>32</td>
+          </tr>
+          <tr>
+            <td>Batch Size</td>
+            <td>1,204</td>
+          </tr>
+          <tr>
+            <td>Prompts per Step</td>
+            <td>64</td>
+          </tr>
+          <tr>
+            <td>Responses per Prompt</td>
+            <td>16</td>
+          </tr>
+          <tr>
+            <td>Total Tokens</td>
+            <td>188 million</td>
+          </tr>
+          <tr>
+            <td>Compute Cost</td>
+            <td>$44.50</td>
+          </tr>
+        </table>
+
+        <div class="highlight-note">
+          <strong>Training Dynamics:</strong> Rewards did not stably increase over time, possibly due to model scale or
+          needing additional training steps.
+          We observed a pattern where the model would flip from being equal or worse on tasks to slightly better at
+          intermediate checkpoints.
         </div>
-        <nav class="site-header__nav" aria-label="Primary">
-          <a href="index.html#vision">Vision</a>
-          <a href="index.html#team">Team</a>
-          <a href="index.html#approach">Approach</a>
-          <a href="index.html#evaluations">Evaluations</a>
-        </nav>
-      </header>
+      </section>
 
-      <main class="tech-container">
-        <a href="index.html" class="back-link">← Back to Home</a>
+      <section class="tech-section" id="infrastructure">
+        <h2>Training Architecture</h2>
+        <p>
+          Our training harness relies on an <strong>Async Off-Policy Reinforcement Learning</strong> loop built on top
+          of the <strong>Tinker</strong> platform. This architecture decouples data generation (rollouts) from model
+          optimization, maximizing GPU utilization.
+        </p>
 
-        <h1 style="font-family: 'Space Grotesk', sans-serif; font-size: 3.5rem; margin-bottom: 1rem;">Technical Implementation</h1>
-        <p class="hero__lead">Detailed documentation of the custom RL environments and infrastructure built for this project.</p>
+        <h3>The "Streaming Minibatch" Loop</h3>
+        <p>
+          The core logic resides in <code>continuous_runner.py</code>, which orchestrates the interaction between two
+          key client types:
+        </p>
+        <ul class="tech-list">
+          <li><strong>Sampling Client:</strong> A lightweight client responsible for generating text and computing
+            log-probabilities. It pulls weights from the latest checkpoint to ensure data is "fresh" (on-policy or
+            near-on-policy).</li>
+          <li><strong>Training Client:</strong> A heavy client that computes gradients and updates the LoRA parameters.
+            It runs continuously in the background.</li>
+        </ul>
+        <p>
+          This setup uses a "Streaming Minibatch" strategy. Instead of waiting for a full dataset to be collected before
+          training (Synchronous PPO), we feed small batches of trajectories into the optimizer as soon as they are
+          ready. This reduces the "time-to-first-update" and creates a smoother learning curve.
+        </p>
+        <div class="code-block">
+          # continuous_runner.py (simplified)
+          async def _timed_async_training(...):
+          while i_batch < end_batch: # 1. Asynchronously collect trajectories wrapped_traj=await
+            trajectory_groups_queue.get() # 2. Filter stale data (too far off-policy) if not filter_stale(wrapped_traj):
+            continue # 3. Stream to the optimizer new_sampler, metrics=await train.do_train_step_streaming( ...,
+            trajectory_groups_queue, training_client ) # 4. Update the sampler to the new weights
+            state["sampling_client"]=new_sampler </div>
 
-        <section class="tech-section" id="infrastructure">
-          <h2>Training Architecture</h2>
-          <p>
-            Our training harness relies on an <strong>Async Off-Policy Reinforcement Learning</strong> loop built on top of the <strong>Tinker</strong> platform. This architecture allows us to decouple data generation (rollouts) from model optimization, maximizing GPU utilization.
-          </p>
+            <h3>Off-Policy Staleness Control</h3>
+            <p>
+              We limit off-policy effects by enforcing a maximum staleness threshold on concurrently generated
+              trajectories. Overly old rollouts are discarded and the corresponding tasks are re-issued to maintain
+              policy freshness.
+            </p>
 
-          <h3>The "Streaming Minibatch" Loop</h3>
-          <p>
-            The core logic resides in <code>continuous_runner.py</code>, which orchestrates the interaction between two key client types:
-          </p>
-          <ul class="tech-list">
-            <li><strong>Sampling Client:</strong> A lightweight client responsible for generating text and computing log-probabilities. It pulls weights from the latest checkpoint to ensure data is "fresh" (on-policy or near-on-policy).</li>
-            <li><strong>Training Client:</strong> A heavy client that computes gradients and updates the LoRA parameters. It runs continuously in the background.</li>
-          </ul>
-          <p>
-            This setup uses a "Streaming Minibatch" strategy. Instead of waiting for a full dataset to be collected before training (Synchronous PPO), we feed small batches of trajectories into the optimizer as soon as they are ready. This reduces the "time-to-first-update" and creates a smoother learning curve.
-          </p>
-          <div class="code-block">
-# continuous_runner.py (simplified)
-async def _timed_async_training(...):
-    while i_batch < end_batch:
-        # 1. Asynchronously collect trajectories
-        wrapped_traj = await trajectory_groups_queue.get()
+            <h3>Verifiers Adapter</h3>
+            <p>
+              To integrate the <code>verifiers</code> library (designed for standard OpenAI APIs) with Tinker's custom
+              RPC protocol, we implemented a <code>VerifiersAdapter</code>. This component acts as a translation layer.
+            </p>
+            <p>
+              Crucially, it injects a <strong>Generation Hook</strong> to capture token-level log-probabilities during
+              generation. Standard OpenAI-compatible clients often discard this granular data, but our reward functions
+              rely on it to compute exact probabilities of target words.
+            </p>
+            <div class="code-block">
+              # verifiers_adapter.py
+              async def custom_do_group_rollout(builder, policy):
+              # Fix: Instantiate deep copies for stateful environments
+              envs = [copy.deepcopy(vf_builder.vf_env) for _ in range(group_size)]
 
-        # 2. Filter stale data (too far off-policy)
-        if not filter_stale(wrapped_traj): continue
+              # Run rollouts in parallel
+              results = await asyncio.gather(*[run_one_rollout(env) for env in envs])
+              return TrajectoryGroup(results...)
+            </div>
+      </section>
 
-        # 3. Stream to the optimizer
-        new_sampler, metrics = await train.do_train_step_streaming(
-            ..., trajectory_groups_queue, training_client
-        )
+      <section class="tech-section" id="environments">
+        <h2>Custom Environments: Deep Dive</h2>
+        <p>
+          We developed five distinct RL environments where rewards depend on quantities computed from token-level
+          likelihoods or ground-truth-verifiable self-predictions, rather than human preferences.
+        </p>
 
-        # 4. Update the sampler to the new weights
-        state["sampling_client"] = new_sampler
-          </div>
+        <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 3rem 0;">
 
-          <h3>Verifiers Adapter</h3>
-          <p>
-            To integrate the <code>verifiers</code> library (which is designed for standard OpenAI APIs) with Tinker's custom RPC protocol, we implemented a <code>VerifiersAdapter</code>. This component acts as a translation layer.
-          </p>
-          <p>
-            Crucially, it injects a <strong>Generation Hook</strong> to capture token-level log-probabilities during generation. Standard OpenAI-compatible clients often discard this granular data, but our reward functions (like Ghost Trace) rely on it to compute exact probabilities of target words.
-          </p>
-           <div class="code-block">
-# verifiers_adapter.py
-async def custom_do_group_rollout(builder, policy):
-    # Fix: Instantiate deep copies for stateful environments
-    envs = [copy.deepcopy(vf_builder.vf_env) for _ in range(group_size)]
+        <h3>1. Latent Code Transmission (Ghost Trace)</h3>
+        <h4>Goal</h4>
+        <p>
+          Transmit a target semantic concept (a word drawn from a fixed concept bank) using a fixed-length integer code
+          such that the concept becomes likely under a standardized decoding prompt.
+        </p>
+        <h4>Setup</h4>
+        <p>
+          The model is given a target word and must emit a fixed-length sequence of integers within a specified range (5
+          integers in [0, 999]), with a strict output format. The harness parses the integers and inserts them into a
+          fixed decoding template ("Sequence: ... Guess the object:").
+        </p>
+        <h4>Reward</h4>
+        <p>
+          The target is the original word. The harness computes reward from the model's log-probability assigned to the
+          target word tokens under the decoding prompt containing the emitted code:
+        </p>
+        <div class="math-block">
+          R = (1/k × Σ log P(token<sub>i</sub> | ListenerPrompt)) + 10.0
+        </div>
+        <p>
+          We use the <code>compute_logprobs</code> method on the Tinker Sampling Client to get the exact likelihood of
+          the target tokens given the "number prompt".
+        </p>
 
-    # Run rollouts in parallel
-    results = await asyncio.gather(*[run_one_rollout(env) for env in envs])
-    return TrajectoryGroup(results...)
-          </div>
-        </section>
+        <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 3rem 0;">
 
-        <section class="tech-section" id="environments">
-          <h2>Custom Environments: Deep Dive</h2>
-          <p>
-            We developed five distinct RL environments. Below is a detailed look at the motivation and implementation mechanics for each.
-          </p>
+        <h3>2. Proper-Scoring-Rule Confidence Reporting</h3>
+        <h4>Goal</h4>
+        <p>
+          Answer a labeled synthetic question and report a confidence value c ∈ [0,1] that is incentivized to be
+          calibrated under a strictly proper scoring rule.
+        </p>
+        <h4>Setup</h4>
+        <p>
+          The model answers a question and emits a confidence line (<code>CONFIDENCE: &lt;float&gt;</code>) in a strict
+          format. The harness computes a binary correctness label y ∈ {0,1}.
+        </p>
+        <h4>Reward</h4>
+        <p>
+          Reward combines format validity, task accuracy, and a calibration term computed using the Brier formulation:
+        </p>
+        <div class="math-block">
+          R<sub>cal</sub> = 1 − (c − y)²
+        </div>
+        <p>
+          This is a strictly proper scoring rule for probabilistic forecasts—maximized only when the predicted
+          probability matches true empirical frequency.
+        </p>
 
-          <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 3rem 0;">
+        <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 3rem 0;">
 
-          <h3>1. Ghost Trace</h3>
-          <h4>Motivation</h4>
-          <p>
-            <strong>"Can the model agree with itself?"</strong><br>
-            Ghost Trace tests <em>grounding</em> and <em>internal consistency</em>. We force the model to communicate a complex concept (e.g., "Justice") to itself using a severely constrained channel (5 abstract integers). If the model can reliably recover the concept from its own code, it implies it has formed a stable internal mapping between abstract symbols and semantic concepts.
-          </p>
-          <h4>Implementation Mechanics</h4>
-          <p>
-            The reward calculation uses a "round-trip" verification. We take the model's output (the numbers) and feed them back into the model as a prompt: <code>"Sequence: 5, 23, 99. Guess the object:"</code>.
-          </p>
-          <p>
-            Instead of generating text, we verify the probability of the <em>original target word</em>.
-          </p>
-          <div class="math-block">
-            R = (1/k * Σ log P(token_i | ListenerPrompt)) + 10.0
-          </div>
-          <p>
-            We use the <code>compute_logprobs</code> method on the Tinker Sampling Client to get the exact likelihood of the target tokens given the "number prompt".
-          </p>
+        <h3>3. Enumerated-Set Entropy Estimation</h3>
+        <h4>Goal</h4>
+        <p>
+          Select a valid discrete response from a constrained set and report an estimate of the flatness of the model's
+          own logprobs that can be validated against the true logprob distribution.
+        </p>
+        <h4>Setup</h4>
+        <p>
+          Each prompt defines a finite set of valid discrete responses (integers satisfying rules like "primes only" or
+          "multiples of 5", or numbers from 1 to 100). The model outputs both a discrete choice and a normalized entropy
+          estimate.
+        </p>
+        <h4>Target Signal</h4>
+        <p>
+          We check the log-probabilities for each item in the valid set, normalized into a probability distribution, and
+          ground truth is the normalized Shannon entropy:
+        </p>
+        <div class="math-block">
+          H(P) = −Σ p<sub>i</sub> × log(p<sub>i</sub>)
+        </div>
+        <h4>Reward</h4>
+        <p>
+          Reward decreases with absolute entropy-estimation error (implemented as a clipped linear score).
+        </p>
 
-          <h3>2. Self Prediction</h3>
-          <h4>Motivation</h4>
-          <p>
-            <strong>"Do you know when you are wrong?"</strong><br>
-            Standard RLHF rewards models for being right. This often leads to "sycophancy" or overconfidence. Self Prediction adds a second objective: <em>Calibration</em>. A model that says "I am 60% confident" and is right 60% of the time is more useful than a model that is always 100% confident but occasionally hallucinates.
-          </p>
-          <h4>Implementation Mechanics</h4>
-          <p>
-            We use the <strong>Brier Score</strong>, a proper scoring rule that is strictly maximized only when the predicted probability matches the true empirical frequency.
-          </p>
-          <div class="math-block">
-             R_cal = 1.0 - (Confidence - IsCorrect)^2
-          </div>
-          <p>
-            The reward function parses the model's output for a specific XML tag <code>&lt;confidence&gt;0.8&lt;/confidence&gt;</code>. If the format is broken, the model receives a penalty, teaching it to adhere to strict structural constraints.
-          </p>
+        <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 3rem 0;">
 
-          <h3>3. Gradient Prophet</h3>
-          <h4>Motivation</h4>
-          <p>
-            <strong>"Theory of Self."</strong><br>
-            Humans have a sense of how learning works ("If I read this book, I will know more about history"). Gradient Prophet attempts to instill this in models. The task asks: <em>"How will your beliefs change if you read this text?"</em>. This is a step towards models that can select their own training data or recognize dangerous information hazards.
-          </p>
-          <h4>Implementation Mechanics</h4>
-          <p>
-            The environment uses a two-step verification:
-          </p>
-          <ol class="tech-list">
-            <li><strong>Measure:</strong> Query the model for the probability of an answer <em>before</em> seeing the lesson.</li>
-            <li><strong>Update (In-Context):</strong> Append the lesson to the context and query the probability again.</li>
-            <li><strong>Compare:</strong> The reward is based on how accurately the model predicted the difference ($\Delta$) between Step 1 and Step 2.</li>
-          </ol>
+        <h3>4. Context-Conditioned Likelihood-Shift Prediction</h3>
+        <h4>Goal</h4>
+        <p>
+          Predict how prepending auxiliary context changes the model's log-probability of a designated target answer. A
+          separate variant ranks probes by how strongly their predictive distributions change.
+        </p>
+        <h4>Setup</h4>
+        <p>
+          Each instance provides auxiliary context c and one or more probes (q<sub>i</sub>, a<sub>i</sub>) with
+          designated target answers. In the <code>in_context</code> variant, the model outputs a single scalar
+          prediction Δ̂ for the log-probability shift.
+        </p>
+        <h4>Target Signal</h4>
+        <p>
+          The harness scores the target answer under two prompts (with and without c) using the scoring API.
+          Ground-truth shift = log P(a|c,q) − log P(a|q).
+        </p>
+        <h4>Reward</h4>
+        <p>
+          Reward is a smooth decreasing function of prediction error (inverse-squared-error style score).
+        </p>
 
-          <h3>4. Entropy Intuition</h3>
-          <h4>Motivation</h4>
-          <p>
-            <strong>"Metacognition of Uncertainty."</strong><br>
-            While Self Prediction asks for a single confidence number, Entropy Intuition asks the model to predict the <em>shape</em> of its uncertainty. High entropy means "I have many possible answers"; low entropy means "I am sure of one thing".
-          </p>
-          <h4>Implementation Mechanics</h4>
-          <p>
-            We compute the "True Entropy" by performing a full forward pass over the vocabulary (constrained to the number range) and calculating the Shannon entropy of the softmax distribution.
-          </p>
-          <div class="math-block">
-            H(P) = -Σ p_i * log(p_i)
-          </div>
-          <p>
-            The reward is the absolute difference between the model's predicted scalar and this calculated truth.
-          </p>
+        <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 3rem 0;">
 
-          <h3>5. Gradient Intuition</h3>
-          <h4>Motivation</h4>
-          <p>
-            <strong>"Causal Self-Awareness."</strong><br>
-            This is our most advanced task. It asks the model to predict the effect of a <em>parameter update</em> (Gradient Descent) before it happens. This differs from Gradient Prophet (which is in-context learning). It tests if the model understands the geometry of its own loss landscape.
-          </p>
-          <h4>Implementation Mechanics: The Shadow Client</h4>
-          <p>
-            Measuring the effect of a gradient step is destructive—it changes the model. To do this safely during training, we built a <strong>Shadow Client</strong>.
-          </p>
-          <div class="code-block">
-# gradient_intuition.py
-async def _measure_true_gradient_effect(self, prompt, answer, probe):
-    # 1. Reset Shadow Client to match current main model
-    await self.shadow_client.reset_weights()
+        <h3>5. Parameter-Update Sensitivity Prediction</h3>
+        <h4>Goal</h4>
+        <p>
+          Predict the effect of a single gradient-based update on the model's future behavior, operationalized as the
+          change in log-probability of a held-out probe answer after one update step on a provided training sample.
+        </p>
+        <h4>Setup</h4>
+        <p>
+          Each instance provides (i) a training datum (x,y) and (ii) an independent probe (q,a). The model outputs a
+          scalar prediction Δ̂<sub>upd</sub> for how the probe likelihood will change.
+        </p>
+        <h4>The Shadow Client</h4>
+        <p>
+          Measuring the effect of a gradient step is destructive—it changes the model. To do this safely during
+          training, we built a <strong>Shadow Client</strong>:
+        </p>
+        <div class="code-block">
+          # gradient_intuition.py
+          async def _measure_true_gradient_effect(self, prompt, answer, probe):
+          # 1. Reset Shadow Client to match current main model
+          await self.shadow_client.reset_weights()
 
-    # 2. Pre-measurement
-    prob_pre = await self.shadow_client.compute_logprobs(probe)
+          # 2. Pre-measurement
+          prob_pre = await self.shadow_client.compute_logprobs(probe)
 
-    # 3. Perform ONE gradient step on the Shadow Client ONLY
-    await self.shadow_client.train_step(prompt, answer)
+          # 3. Perform ONE gradient step on the Shadow Client ONLY
+          await self.shadow_client.train_step(prompt, answer)
 
-    # 4. Post-measurement
-    prob_post = await self.shadow_client.compute_logprobs(probe)
+          # 4. Post-measurement
+          prob_post = await self.shadow_client.compute_logprobs(probe)
 
-    return prob_post - prob_pre
-          </div>
-          <p>
-            The reward is proportional to the accuracy of the prediction of this <code>prob_post - prob_pre</code> delta.
-          </p>
-        </section>
+          return prob_post - prob_pre
+        </div>
+        <p>
+          The reward is proportional to the accuracy of the prediction of this <code>prob_post - prob_pre</code> delta.
+        </p>
 
-        <footer class="footer">
-            <p class="footer__brand">Aligned Minds</p>
-            <p class="footer__meta">CSCI 5541 · Natural Language Processing</p>
-        </footer>
-      </main>
-    </div>
-  </body>
+        <div class="highlight-note">
+          <strong>Note:</strong> This environment is substantially more expensive than string-based rewards, requiring
+          additional forward/backward passes and an optimizer step on a model copy. The harness parallelizes reward
+          computation and isolates expensive target computation from the main sampling loop where possible.
+        </div>
+      </section>
+
+      <section class="tech-section" id="failure-analysis">
+        <h2>Failure Case Analysis</h2>
+
+        <h3>Calibration Tasks: No Improvement</h3>
+        <p>
+          Both confidence-and-accuracy and Brier score calibration tasks showed no significant improvement (p &gt; 0.5),
+          despite using proper scoring rules.
+          The likely cause is <strong>sparse gradient signal</strong>: the calibration reward R<sub>cal</sub> = 1 − (c −
+          y)² provides maximal gradient magnitude at c = 0.5 and diminishes toward c ∈ {0, 1}.
+          Since the base model already produces relatively extreme confidence values, the training signal may have been
+          too weak to induce behavioral change.
+        </p>
+
+        <h3>Likelihood Prediction: High Variance</h3>
+        <p>
+          In-context learning prediction and surprise-ranking tasks showed high step-to-step reward variance (ranging
+          from −0.7 to +3.4 within consecutive batches).
+          The underlying measurement—log-probability differences—is extremely sensitive to specific prompts, more so
+          than the actual signal we tried to learn.
+        </p>
+      </section>
+
+      <section class="tech-section" id="replication">
+        <h2>Replication</h2>
+        <p>
+          We implement an orchestration pipeline using GitHub Actions to manage long-running training on preemptible
+          hardware.
+          It checkpoints the model state via the <code>tinker</code> API and commits execution metadata (curriculum
+          indices, metrics, and checkpoint URIs) back to the repository's version history, which allows training to
+          resume across sessions.
+        </p>
+        <p>
+          <strong>To replicate:</strong>
+        </p>
+        <ol class="tech-list">
+          <li>Fork the repository at <a href="https://github.com/SauersML/minds_RL"
+              style="color: var(--accent);">github.com/SauersML/minds_RL</a></li>
+          <li>Set the <code>TINKER_API_KEY</code> secret in your repository settings</li>
+          <li>Run the GitHub Action workflow files</li>
+        </ol>
+      </section>
+
+      <footer class="footer">
+        <p class="footer__brand">Aligned Minds</p>
+        <p class="footer__meta">CSCI 5541 · Natural Language Processing</p>
+      </footer>
+    </main>
+  </div>
+</body>
+
 </html>
