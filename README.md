@@ -1,23 +1,6 @@
 # Minds RL: Tinker Client Training Harness
 
-A professional, high-performance client-side harness for reinforcement learning (RL) over large language models, powered by the Tinker API. This repository provides a robust framework for defining custom RL environments using the `verifiers` interface and orchestrating asynchronous, off-policy training workflows that offload compute-intensive tasks to the remote Tinker service.
-
-## 📚 Table of Contents
-- [Overview](#overview)
-- [Architecture Deep Dive](#architecture-deep-dive)
-- [Installation](#installation)
-- [Configuration](#configuration)
-  - [Environment Variables](#environment-variables)
-  - [TOML Configuration Schema](#toml-configuration-schema)
-- [Environments & Reward Math](#environments--reward-math)
-  - [Ghost Trace](#ghost-trace)
-  - [Gradient Prophet](#gradient-prophet)
-  - [Self Prediction](#self-prediction)
-  - [Entropy Intuition](#entropy-intuition)
-  - [Gradient Intuition](#gradient-intuition)
-- [Interfaces & Integration](#interfaces--integration)
-- [Development Guide](#development-guide)
-- [Troubleshooting](#troubleshooting)
+A client-side harness for reinforcement learning (RL) over large language models, powered by the Tinker API. This repository provides a robust framework for defining custom RL environments using the `verifiers` interface and orchestrating asynchronous, off-policy training workflows that offload compute-intensive tasks to the remote Tinker service.
 
 ## Overview
 
