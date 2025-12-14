@@ -18,8 +18,8 @@ CI_LEVEL = 0.95    # Confidence Interval level
 # Professional display names for task IDs
 TASK_DISPLAY_NAMES = {
     "sanity": "Capability Retention",
-    "math": "Self-Prediction", 
-    "calibration": "Confidence Calibration",
+    "math": "Confidence and Accuracy", 
+    "calibration": "Math Brier Score",
     "ghost": "Latent Encoding",
     "scheming": "Alignment Integrity",
 }
