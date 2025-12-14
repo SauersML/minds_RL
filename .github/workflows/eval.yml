@@ -176,6 +176,15 @@ jobs:
           # Import the evaluate function directly from the installed package
           from tinker_cookbook.recipes.verifiers_rl.evaluate import evaluate
 
+          # Custom Encoder to handle non-serializable objects like SamplingClient
+          class RobustEncoder(json.JSONEncoder):
+              def default(self, o):
+                  try:
+                      return super().default(o)
+                  except TypeError:
+                      # If it can't be serialized (like SamplingClient), convert to string
+                      return str(o)
+
           async def main():
               parser = argparse.ArgumentParser()
               parser.add_argument("--vf_env_id", required=True)
@@ -212,9 +221,9 @@ jobs:
               else:
                   data = results 
                   
-              # Save full structured data
+              # Save full structured data using the RobustEncoder
               with open(args.output_file, "w") as f:
-                  json.dump(data, f)
+                  json.dump(data, f, cls=RobustEncoder)
               
               print(f"Successfully saved structured results to {args.output_file}")
 
