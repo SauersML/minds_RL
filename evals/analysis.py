@@ -238,9 +238,8 @@ def plot_kde_distributions(df: pd.DataFrame, output_path: Path, task_filter: str
         
         # Style
         display_name = TASK_DISPLAY_NAMES.get(task, task)
-        ax.set_ylabel('Density', color=COLORS['text'], fontsize=10)
+        ax.set_ylabel(display_name, color=COLORS['text'], fontsize=11, fontweight='bold')
         ax.set_xlabel('Reward', color=COLORS['text'], fontsize=10)
-        ax.set_title(display_name, color=COLORS['text'], fontsize=12, fontweight='bold')
         ax.tick_params(colors=COLORS['text'])
         ax.legend(framealpha=0.9, facecolor=COLORS['card'], edgecolor=COLORS['grid'], fontsize=9)
         
@@ -331,10 +330,9 @@ def plot_paired_violin(df: pd.DataFrame, output_path: Path, task_filter: str = "
         
         # Style
         display_name = TASK_DISPLAY_NAMES.get(task, task)
-        ax.set_title(display_name, color=COLORS['text'], fontsize=12, fontweight='bold')
         ax.set_xticks([0, 1])
         ax.set_xticklabels(['Base', 'Checkpoint'], color=COLORS['text'], fontsize=10)
-        ax.set_ylabel('Reward', color=COLORS['text'], fontsize=10)
+        ax.set_ylabel(display_name, color=COLORS['text'], fontsize=11, fontweight='bold')
         ax.tick_params(colors=COLORS['text'])
         ax.xaxis.grid(False)
         ax.yaxis.grid(True, linestyle='--', alpha=0.3, color=COLORS['grid'])
