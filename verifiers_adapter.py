@@ -252,7 +252,8 @@ def make_custom_do_group_rollout(
         if local_tokenizer is None:
             local_tokenizer = get_tokenizer(cfg.model_name)
         if shared_renderer is None:
-            renderer_name = model_info.get_recommended_renderer_name(cfg.model_name)
+            # Force disable thinking to stop yapping
+            renderer_name = "qwen3_disable_thinking" 
             shared_renderer = renderers.get_renderer(renderer_name, local_tokenizer)
 
         sampling_client = cast(TinkerTokenCompleter, policy).sampling_client
