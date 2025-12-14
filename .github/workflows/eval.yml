@@ -164,16 +164,75 @@ jobs:
       - name: Create Results Directory
         run: mkdir -p results
 
+      - name: Create Evaluation Wrapper Script
+        run: |
+          cat <<EOF > run_eval_wrapper.py
+          import argparse
+          import asyncio
+          import json
+          import os
+          import sys
+          
+          # Import the evaluate function directly from the installed package
+          from tinker_cookbook.recipes.verifiers_rl.evaluate import evaluate
+
+          async def main():
+              parser = argparse.ArgumentParser()
+              parser.add_argument("--vf_env_id", required=True)
+              parser.add_argument("--model_name", required=False)
+              parser.add_argument("--model_path", required=False)
+              parser.add_argument("--num_examples", type=int, default=10)
+              parser.add_argument("--output_file", required=True)
+              args = parser.parse_args()
+
+              # Use default constants matching the CLI Config in evaluate.py
+              kwargs = {
+                  "vf_env_id": args.vf_env_id,
+                  "vf_env_args": {},
+                  "model_name": args.model_name,
+                  "num_examples": args.num_examples,
+                  "rollouts_per_example": 1,
+                  "max_concurrent": 32,
+                  "max_tokens": 1024,
+                  "temperature": 1.0,
+                  "model_path": args.model_path or None
+              }
+              
+              print(f"Starting Eval: {args.vf_env_id} -> {args.output_file}")
+              
+              # Run evaluation
+              # The evaluate() function prints logs to stdout internally (via log_results)
+              results = await evaluate(**kwargs)
+              
+              # Convert Pydantic models to dict if necessary
+              if hasattr(results, "model_dump"):
+                  data = results.model_dump()
+              elif hasattr(results, "dict"):
+                  data = results.dict()
+              else:
+                  data = results 
+                  
+              # Save full structured data
+              with open(args.output_file, "w") as f:
+                  json.dump(data, f)
+              
+              print(f"Successfully saved structured results to {args.output_file}")
+
+          if __name__ == "__main__":
+              asyncio.run(main())
+          EOF
+
       - name: Eval Base Model (${{ matrix.name }})
         run: |
           echo "Running ${{ matrix.name }} on Base Model..."
           set +e
-          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="${{ matrix.module }}" \
-            model_name="${{ env.BASE_MODEL }}" \
-            num_examples=${{ matrix.num }} \
-            rollouts_per_example=1 \
+          python run_eval_wrapper.py \
+            --vf_env_id="${{ matrix.module }}" \
+            --model_name="${{ env.BASE_MODEL }}" \
+            --num_examples=${{ matrix.num }} \
+            --output_file="results/base_${{ matrix.id }}.json" \
             > results/base_${{ matrix.id }}.log 2>&1
+          
           EXIT_CODE=$?
           cat results/base_${{ matrix.id }}.log
           if [ $EXIT_CODE -ne 0 ]; then
@@ -185,12 +244,13 @@ jobs:
         run: |
           echo "Running ${{ matrix.name }} on Checkpoint..."
           set +e
-          python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
-            vf_env_id="${{ matrix.module }}" \
-            model_path="${{ env.CHECKPOINT_PATH }}" \
-            num_examples=${{ matrix.num }} \
-            rollouts_per_example=1 \
+          python run_eval_wrapper.py \
+            --vf_env_id="${{ matrix.module }}" \
+            --model_path="${{ env.CHECKPOINT_PATH }}" \
+            --num_examples=${{ matrix.num }} \
+            --output_file="results/ckpt_${{ matrix.id }}.json" \
             > results/ckpt_${{ matrix.id }}.log 2>&1
+            
           EXIT_CODE=$?
           cat results/ckpt_${{ matrix.id }}.log
           if [ $EXIT_CODE -ne 0 ]; then
@@ -198,14 +258,14 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      - name: Upload Logs
+      - name: Upload Artifacts (Logs & JSON)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: results-${{ matrix.id }}
-          path: results/*.log
+          path: results/
 
-  # 3. Generate Report (Aggregates All Logs)
+  # 3. Generate Report (Aggregates All Logs & JSONs)
   generate-report:
     needs: [resolve-config, evaluate]
     if: always()
@@ -218,46 +278,126 @@ jobs:
           merge-multiple: true
           path: results
 
-      - name: List Results
-        run: ls -R results
-
-      - name: Generate Science Summary
+      - name: Create Science Aggregator
         run: |
-          echo " 🧪 Eval Science Report" >> $GITHUB_STEP_SUMMARY
-          echo "Evaluated Checkpoint: \`${{ needs.resolve-config.outputs.checkpoint_path }}\`" >> $GITHUB_STEP_SUMMARY
+          cat <<EOF > aggregate_science.py
+          import glob
+          import json
+          import csv
+          import os
+          import math
+
+          print("🔎 Starting Science Aggregation...")
+
+          rows = []
+          summary_stats = {} # (task, metric) -> {base: [], ckpt: []}
+
+          files = glob.glob("results/*.json")
+          print(f"Found {len(files)} result files.")
+
+          for fname in sorted(files):
+              basename = os.path.basename(fname)
+              # Filename format: {type}_{taskid}.json (e.g. base_math.json)
+              parts = basename.replace(".json", "").split("_", 1)
+              
+              if len(parts) != 2:
+                  print(f"Skipping malformed filename: {fname}")
+                  continue
+                  
+              version = parts[0] # 'base' or 'ckpt'
+              task_id = parts[1] # 'math', 'scheming', etc.
+              
+              try:
+                  with open(fname) as f:
+                      data = json.load(f)
+              except Exception as e:
+                  print(f"Failed to load {fname}: {e}")
+                  continue
+                  
+              # Extract rewards
+              rewards = data.get("reward", [])
+              
+              # Extract other metrics
+              metrics = data.get("metrics", {})
+              
+              # Flatten Rewards
+              # rollouts_per_example was 1 for this pipeline, so index is example_id
+              for i, r in enumerate(rewards):
+                  rows.append([task_id, version, i, 0, "reward", r])
+                  
+                  # Collect stats for summary
+                  key = (task_id, "reward")
+                  if key not in summary_stats: summary_stats[key] = {"base": [], "ckpt": []}
+                  summary_stats[key][version].append(r)
+
+              # Flatten Metrics
+              for metric_name, values in metrics.items():
+                  for i, v in enumerate(values):
+                      rows.append([task_id, version, i, 0, metric_name, v])
+                      
+                      # Collect stats
+                      key = (task_id, metric_name)
+                      if key not in summary_stats: summary_stats[key] = {"base": [], "ckpt": []}
+                      summary_stats[key][version].append(v)
+
+          # Write Master TSV
+          tsv_path = "evals.tsv"
+          with open(tsv_path, "w", newline="") as f:
+              writer = csv.writer(f, delimiter="\t")
+              writer.writerow(["Task", "Model_Version", "Example_ID", "Rollout_ID", "Metric", "Value"])
+              writer.writerows(rows)
           
-          # Helper function to safely grep score
-          get_score() {
-            local file=$1
-            if [ -f "$file" ]; then
-              grep 'reward: avg' "$file" || echo 'N/A'
-            else
-              echo 'Missing Log'
-            fi
-          }
+          print(f"✅ Saved {len(rows)} rows to {tsv_path}")
 
-          echo " 1. Accuracy (Static Math)" >> $GITHUB_STEP_SUMMARY
-          echo "Base: $(get_score results/base_math.log)" >> $GITHUB_STEP_SUMMARY
-          echo "Ckpt: $(get_score results/ckpt_math.log)" >> $GITHUB_STEP_SUMMARY
+          # Generate Markdown Summary
+          md_path = "summary.md"
+          with open(md_path, "w") as f:
+              f.write("## 🧪 Eval Science Report\n\n")
+              f.write("| Task | Metric | Base Mean | Ckpt Mean | Delta |\n")
+              f.write("|---|---|---|---|---|\n")
+              
+              # Sort by task for cleaner output
+              sorted_keys = sorted(summary_stats.keys())
+              
+              for (task, metric) in sorted_keys:
+                  stats = summary_stats[(task, metric)]
+                  base_vals = stats["base"]
+                  ckpt_vals = stats["ckpt"]
+                  
+                  if not base_vals or not ckpt_vals:
+                      continue
+                      
+                  avg_base = sum(base_vals) / len(base_vals)
+                  avg_ckpt = sum(ckpt_vals) / len(ckpt_vals)
+                  delta = avg_ckpt - avg_base
+                  
+                  # Formatting highlight
+                  delta_str = f"{delta:+.4f}"
+                  if delta > 0: delta_str = f"**{delta_str}** 🟢"
+                  elif delta < 0: delta_str = f"{delta_str} 🔴"
+                  
+                  f.write(f"| {task} | {metric} | {avg_base:.4f} | {avg_ckpt:.4f} | {delta_str} |\n")
 
-          echo " 2. Confidence (Calibration Static)" >> $GITHUB_STEP_SUMMARY
-          echo "Base: $(get_score results/base_calibration.log)" >> $GITHUB_STEP_SUMMARY
-          echo "Ckpt: $(get_score results/ckpt_calibration.log)" >> $GITHUB_STEP_SUMMARY
-          
-          echo " 3. Grounding (Frozen Ghost)" >> $GITHUB_STEP_SUMMARY
-          echo "Base: $(get_score results/base_ghost.log)" >> $GITHUB_STEP_SUMMARY
-          echo "Ckpt: $(get_score results/ckpt_ghost.log)" >> $GITHUB_STEP_SUMMARY
-          
-          echo " 4. Safety (Sanity Check)" >> $GITHUB_STEP_SUMMARY
-          echo "Base: $(get_score results/base_sanity.log)" >> $GITHUB_STEP_SUMMARY
-          echo "Ckpt: $(get_score results/ckpt_sanity.log)" >> $GITHUB_STEP_SUMMARY
+          print("✅ Generated summary.md")
+          EOF
 
-          echo " 5. Deception (Scheming Commitment)" >> $GITHUB_STEP_SUMMARY
-          echo "Base: $(get_score results/base_scheming.log)" >> $GITHUB_STEP_SUMMARY
-          echo "Ckpt: $(get_score results/ckpt_scheming.log)" >> $GITHUB_STEP_SUMMARY
+      - name: Run Aggregation
+        run: python3 aggregate_science.py
 
-      - name: Save Aggregated Logs
+      - name: Publish Summary
+        run: |
+          cat summary.md >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Base Model**: ${{ needs.resolve-config.outputs.base_model }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Checkpoint**: ${{ needs.resolve-config.outputs.checkpoint_path }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Save Aggregated Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: full-eval-logs
-          path: results/*.log
+          name: eval-science-pack
+          path: |
+            evals.tsv
+            summary.md
+            results/*.log
+            results/*.json
