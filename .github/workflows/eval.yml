@@ -109,7 +109,7 @@ jobs:
           - id: ghost_ood
             name: "Latent Encoding OOD"
             module: "evals.eval_ghost_ood"
-            num: 100
+            num: 358
           - id: sanity
             name: "Sanity Check"
             module: "evals.eval_sanity_check"
