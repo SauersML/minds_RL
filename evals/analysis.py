@@ -167,7 +167,6 @@ def plot_rewards_over_time(metrics_path: Path, output_path: Path, window: int = 
     # Style
     ax.set_xlabel("Training Step", fontsize=11, fontweight='medium')
     ax.set_ylabel("Reward (Rolling Avg)", fontsize=11, fontweight='medium')
-    ax.set_title(f"Training Rewards Over Time (window={window})", fontsize=14, fontweight='bold', pad=15)
     ax.xaxis.grid(True, linestyle='--', alpha=0.3)
     ax.yaxis.grid(True, linestyle='--', alpha=0.3)
     
@@ -188,10 +187,17 @@ def plot_results(stats: List[EvalStat], output_path: Path):
     """Generates a professional horizontal bar chart of Deltas with Confidence Intervals."""
     if not stats: return
 
-    # Sort by Delta magnitude for readability
-    stats_sorted = sorted(stats, key=lambda x: x.delta, reverse=True)
+    # Filter to only show the primary "reward" metric (skip wrapped, format_reward, etc.)
+    stats_filtered = [s for s in stats if s.metric == "reward"]
+    if not stats_filtered:
+        # Fallback: if no "reward" metric, use all
+        stats_filtered = stats
     
-    tasks = [f"{TASK_DISPLAY_NAMES.get(s.task, s.task)} ({s.metric})" for s in stats_sorted]
+    # Sort by Delta magnitude for readability
+    stats_sorted = sorted(stats_filtered, key=lambda x: x.delta, reverse=True)
+    
+    # Just show task names, no metric in parentheses
+    tasks = [TASK_DISPLAY_NAMES.get(s.task, s.task) for s in stats_sorted]
     deltas = [s.delta for s in stats_sorted]
     errors = [
         [s.delta - s.ci_low for s in stats_sorted],  # Lower error
@@ -231,20 +237,19 @@ def plot_results(stats: List[EvalStat], output_path: Path):
         'font.size': 10
     })
     
-    fig, ax = plt.subplots(figsize=(12, max(5, len(stats) * 0.7)))
+    fig, ax = plt.subplots(figsize=(12, max(5, len(stats_sorted) * 0.7)))
     fig.patch.set_facecolor(COLORS['bg'])
     ax.set_facecolor(COLORS['card'])
     
-    y_pos = np.arange(len(stats))
+    y_pos = np.arange(len(stats_sorted))
     bars = ax.barh(y_pos, deltas, xerr=errors, align='center', color=colors, 
                    alpha=0.9, capsize=4, error_kw={'elinewidth': 1.5, 'capthick': 1.5, 'alpha': 0.7})
     
     # Style axes
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(tasks, fontsize=10)
+    ax.set_yticklabels(tasks, fontsize=11)
     ax.axvline(0, color=COLORS['text'], linewidth=1.5, linestyle='-', alpha=0.3)
-    ax.set_xlabel('Δ Performance (Checkpoint − Base)', fontsize=11, fontweight='medium')
-    ax.set_title('Evaluation Results: Statistical Comparison', fontsize=14, fontweight='bold', pad=20)
+    ax.set_xlabel('Δ Reward (Checkpoint − Base)', fontsize=12, fontweight='medium')
     
     # Add subtle grid
     ax.xaxis.grid(True, linestyle='--', alpha=0.3)
@@ -260,7 +265,7 @@ def plot_results(stats: List[EvalStat], output_path: Path):
     # Annotate bars with p-values
     x_min = min(s.ci_low for s in stats_sorted)
     x_max = max(s.ci_high for s in stats_sorted)
-    x_range = x_max - x_min
+    x_range = max(x_max - x_min, 0.1)  # Avoid division by zero
     padding = x_range * 0.35
     
     for i, s in enumerate(stats_sorted):
@@ -282,16 +287,6 @@ def plot_results(stats: List[EvalStat], output_path: Path):
     
     ax.set_xlim(x_min - padding * 0.3, x_max + padding)
     
-    # Add legend
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor=COLORS['green'], label='Significant improvement'),
-        Patch(facecolor=COLORS['red'], label='Significant regression'),
-        Patch(facecolor=COLORS['grey'], label='Not significant (p≥0.05)')
-    ]
-    ax.legend(handles=legend_elements, loc='lower right', framealpha=0.9, 
-              facecolor=COLORS['card'], edgecolor=COLORS['grid'], fontsize=9)
-    
     plt.tight_layout()
     plt.savefig(output_path, dpi=200, facecolor=COLORS['bg'], edgecolor='none', bbox_inches='tight')
     plt.close()
@@ -301,8 +296,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="evals.tsv", type=Path)
     parser.add_argument("--output_dir", default="results", type=Path)
-    parser.add_argument("--metrics", default=None, type=Path, 
-                        help="Path to metrics.jsonl for rewards-over-time plot")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -369,9 +362,13 @@ def main():
     # 3. Generate Plots
     plot_results(stats_list, args.output_dir / "analysis_plot.png")
     
-    # 4. Generate Rewards Over Time plot (if metrics provided)
-    if args.metrics:
-        plot_rewards_over_time(args.metrics, args.output_dir / "rewards_over_time.png")
+    # 4. Auto-find metrics.jsonl in outputs/ for rewards-over-time plot
+    script_dir = Path(__file__).parent.parent  # Go up from evals/ to repo root
+    metrics_files = list(script_dir.glob("outputs/**/metrics.jsonl"))
+    if metrics_files:
+        # Use the most recently modified one
+        metrics_path = max(metrics_files, key=lambda p: p.stat().st_mtime)
+        plot_rewards_over_time(metrics_path, args.output_dir / "rewards_over_time.png")
     
     print(f"✅ Analysis complete. Artifacts saved to {args.output_dir}/")
 
